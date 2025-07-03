@@ -1,0 +1,74 @@
+{
+  "name": "RAG Embedding Service",
+  "dockerComposeFile": [
+    "../../services/embedding/docker-compose-embedding.yml"
+  ],
+  "service": "embedding_service",
+  "workspaceFolder": "/app",
+  "shutdownAction": "stopCompose",
+  
+  // Simplified environment handling
+  "containerEnv": {
+    "PROFILE": "dev",
+    "PYTHONPATH": "/app"
+  },
+  
+
+  // Add required features
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    }
+  },
+  
+  // Configure VS Code
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylint",
+        "ms-python.black-formatter",
+        "ms-python.isort"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.formatting.provider": "black"
+      }
+    }
+  },
+  
+  // Port forwarding
+  "forwardPorts": [8000, 6379, 27017, 8003],
+  "portsAttributes": {
+    "8000": {
+      "label": "ChromaDB",
+      "onAutoForward": "notify"
+    },
+    "6379": {
+      "label": "Redis", 
+      "onAutoForward": "silent"
+    },
+    "27017": {
+      "label": "MongoDB",
+      "onAutoForward": "silent"
+    },
+    "8003": {
+      "label": "Embedding Service",
+      "onAutoForward": "notify"
+    }
+  },
+  
+  // Simplified post-create command
+  // "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt",
+  "remoteUser": "root",
+  "updateContentCommand": "true",
+  "postCreateCommand": "echo 'Container created'",
+  
+  "initializeCommand": "echo 'Initializing...'",
+  "onCreateCommand": "echo 'Container starting...'",
+  
+  "overrideCommand": true
+}

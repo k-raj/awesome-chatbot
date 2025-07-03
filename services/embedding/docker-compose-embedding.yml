@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # Import external services from parent directory
+  mongodb:
+    extends:
+      file: ../../docker-compose.yml
+      service: mongodb
+    networks:
+      - common_network
+
+  redis:
+    extends:
+      file: ../../docker-compose.yml
+      service: redis
+    networks:
+      - common_network
+
+  chromadb:
+    extends:
+      file: ../../docker-compose.yml
+      service: chromadb
+    networks:
+      - common_network
+
+  # Main embedding service
+  embedding_service:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_embedding_service
+    image: embedding_service_image
+    restart: always
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    env_file:
+      - ../../env/${PROFILE:-dev}.env
+    environment:
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      
+      
+    volumes:
+      - ../../app_data/embedding_service/uploads:/app_data/uploads:rw
+      - ../../app_data/embedding_service/logs:/app_data/logs:rw
+      - ../../app_data/embedding_service/model_cache:/root/.cache/huggingface:rw
+      - ../../app_data/embedding_service/spacy_cache:/root/.cache/spacy:rw
+      - .:/app:rw
+    ports:
+      - "${EMBEDDING_SERVICE_PORT:-8003}:8000"  # Optional health check endpoint
+    
+    networks:
+      - common_network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    command: sleep 1000000
+
+
+# Common network for service communication
+networks:
+  common_network:
+    driver: bridge
