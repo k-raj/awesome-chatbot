@@ -78,14 +78,6 @@ services:
     volumes:
       - ./app_data/mongodb_data:/data/db:rw
       - ./scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
-    command: >
-      bash -c "
-        mongod --fork --logpath /dev/null --dbpath /data/db --bind_ip_all --quiet &&
-        sleep 2 &&
-        mongosh admin --eval 'load(\"/docker-entrypoint-initdb.d/init-mongo.js\")' --quiet &&
-        mongod --shutdown &&
-        mongod --dbpath /data/db --bind_ip_all --quiet --logpath /dev/null
-      "
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
