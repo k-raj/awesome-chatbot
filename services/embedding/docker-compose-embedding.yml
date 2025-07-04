@@ -9,6 +9,13 @@ services:
     networks:
       - common_network
 
+  elasticsearch:
+    extends:
+      file: ../../docker-compose.yml
+      service: elasticsearch
+    networks:
+      - common_network
+      
   redis:
     extends:
       file: ../../docker-compose.yml
@@ -38,6 +45,8 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
+      elasticsearch:
+        condition: service_healthy
     env_file:
       - ../../env/${PROFILE:-dev}.env
     environment:

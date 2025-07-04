@@ -1,6 +1,6 @@
 """
-Advanced Embedding Service with Hybrid Retrieval - MongoDB Version (Fixed for ChromaDB v2)
-Handles document embedding, BM25 indexing, and similarity search
+Advanced Embedding Service with Hybrid Retrieval - MongoDB + Elasticsearch Version
+Handles document embedding, Elasticsearch BM25 indexing, and similarity search with group-based filtering
 """
 
 import os
@@ -9,20 +9,19 @@ import time
 import logging
 from typing import List, Dict
 from datetime import datetime, timedelta
-from bson import ObjectId
-
 import redis
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import chromadb
 from chromadb.config import Settings
+from elasticsearch import Elasticsearch
 import PyPDF2
 import docx
 
 # Import advanced RAG components
 from rag_utils import (
     Document, AdvancedRAGPipeline,
-    initialize_chroma_client, get_mongodb_connection,
+    initialize_chroma_client, get_mongodb_connection, get_elasticsearch_connection, HybridRetriever
 )
 
 # Configure logging
@@ -49,10 +48,18 @@ MONGO_DATABASE = os.environ.get('MONGO_INITDB_DATABASE', 'rag_system')
 
 MONGO_URI = f"mongodb://{MONGO_USERNAME}:{MONGO_PASSWORD}@{MONGO_HOST}:{MONGO_PORT}"
 
+# Elasticsearch configuration
+ELASTICSEARCH_HOST = os.environ.get('ELASTICSEARCH_HOST', 'localhost')
+ELASTICSEARCH_PORT = int(os.environ.get('ELASTICSEARCH_PORT', '9200'))
+ELASTICSEARCH_USERNAME = os.environ.get('ELASTICSEARCH_USERNAME', None)
+ELASTICSEARCH_PASSWORD = os.environ.get('ELASTICSEARCH_PASSWORD', None)
+ELASTICSEARCH_INDEX = os.environ.get('ELASTICSEARCH_INDEX', 'rag_chunks')
+
 # Global variables for services
 redis_client = None
 embedding_model = None
 chroma_client = None
+es_client = None
 mongo_client = None
 db = None
 rag_pipeline = None
@@ -60,7 +67,7 @@ rag_pipeline = None
 
 def initialize_services():
     """Initialize all services with proper error handling"""
-    global redis_client, embedding_model, chroma_client, mongo_client, db, rag_pipeline
+    global redis_client, embedding_model, chroma_client, es_client, mongo_client, db, rag_pipeline
     
     logger.info("Initializing services...")
     
@@ -98,6 +105,19 @@ def initialize_services():
         chroma_client = chromadb.Client(settings=Settings(anonymized_telemetry=False))
         logger.warning("Using in-memory ChromaDB client")
     
+    # Initialize Elasticsearch
+    try:
+        es_client = get_elasticsearch_connection(
+            host=ELASTICSEARCH_HOST,
+            port=ELASTICSEARCH_PORT,
+            username=ELASTICSEARCH_USERNAME,
+            password=ELASTICSEARCH_PASSWORD
+        )
+        logger.info("Elasticsearch connected successfully")
+    except Exception as e:
+        logger.error(f"Elasticsearch connection failed: {e}")
+        raise
+    
     # Initialize MongoDB
     try:
         mongo_client, db = get_mongodb_connection(MONGO_URI, MONGO_DATABASE)
@@ -112,7 +132,8 @@ def initialize_services():
             mongo_uri=MONGO_URI,
             database_name=MONGO_DATABASE,
             redis_client=redis_client,
-            chroma_client=chroma_client
+            chroma_client=chroma_client,
+            es_client=es_client
         )
         logger.info("Advanced RAG pipeline initialized successfully")
     except Exception as e:
@@ -195,32 +216,53 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
         return ""
 
 
-def log_retrieval_performance(query: str, num_results: int, response_time_ms: int):
-    """Log retrieval performance metrics to MongoDB"""
-    try:
-        db.retrieval_logs.insert_one({
-            'query': query,
-            'num_results': num_results,
-            'response_time_ms': response_time_ms,
-            'created_at': datetime.utcnow()
-        })
-    except Exception as e:
-        logger.error(f"Error logging retrieval performance: {e}")
+def get_file_type_from_filename(filename: str) -> str:
+    """
+    Determine file type from filename extension
+    Returns the file type or raises ValueError for unsupported types
+    """
+    if not filename:
+        raise ValueError("Filename cannot be empty")
+    
+    # Get file extension (convert to lowercase for case-insensitive comparison)
+    file_extension = os.path.splitext(filename.lower())[1]
+    
+    # Define supported file types
+    supported_extensions = {
+        '.pdf': 'pdf',
+        '.txt': 'txt',
+        '.doc': 'doc',
+        '.docx': 'docx'
+    }
+    
+    if file_extension not in supported_extensions:
+        supported_types = ', '.join(supported_extensions.keys())
+        raise ValueError(f"Unsupported file type '{file_extension}'. Supported types: {supported_types}")
+    
+    return supported_extensions[file_extension]
 
 
 def process_uploaded_file(task: Dict):
     """Process an uploaded file with advanced chunking and indexing"""
-    file_id = task['file_id']
-    file_path = task['file_path']
-    file_type = task['file_type']
-    group_id = task['group_id']
-    
-    logger.info(f"Processing file {file_id}: {file_path}")
-    
     try:
+        filename = task['filename']
+        file_id = task['file_id']
+        file_path = task['file_path']
+        group_id = task.get('group_id', 'general')  # Get group_id from task
+        
+        logger.info(f"Processing file {file_id}: {file_path} for group {group_id}")
+        
         # Check if file exists
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Determine file type from filename
+        try:
+            file_type = get_file_type_from_filename(filename)
+            logger.info(f"Detected file type: {file_type} for file: {filename}")
+        except ValueError as e:
+            logger.error(f"File type determination failed for {filename}: {e}")
+            raise ValueError(f"Unsupported file type: {e}")
         
         # Extract text from file
         text = extract_text_from_file(file_path, file_type)
@@ -240,29 +282,37 @@ def process_uploaded_file(task: Dict):
                 'group_id': group_id,
                 'source': 'user_upload',
                 'upload_date': datetime.utcnow().isoformat(),
-                'filename': task.get('filename', 'unknown'),
+                'filename': filename,
                 'file_size': len(text),
                 'processed_by': 'advanced_rag_pipeline'
             }
         )
         
-        # Process with advanced pipeline
-        chunks_count = rag_pipeline.process_document(doc)
+        # Create retriever with Elasticsearch support
+        retriever = HybridRetriever(
+            chroma_client=chroma_client,
+            es_client=es_client
+        )
+        
+        # Process with advanced pipeline (group-aware)
+        chunks_count = rag_pipeline.process_document(doc, retriever, group_id)
         
         # Update file status in MongoDB
         db.file_uploads.update_one(
-            {'_id': ObjectId(file_id)},
+            {'_id': file_id},
             {
                 '$set': {
                     'upload_status': 'completed',
                     'chunks_count': chunks_count,
                     'processed_at': datetime.utcnow(),
-                    'text_length': len(text)
+                    'text_length': len(text),
+                    'file_type': file_type,
+                    'group_id': group_id  # Store group_id
                 }
             }
         )
             
-        logger.info(f"Successfully processed file {file_id} with {chunks_count} chunks")
+        logger.info(f"Successfully processed file {file_id} with {chunks_count} chunks for group {group_id}")
         
         # Store result in Redis
         result = {
@@ -270,6 +320,8 @@ def process_uploaded_file(task: Dict):
             'status': 'completed',
             'chunks_count': chunks_count,
             'text_length': len(text),
+            'file_type': file_type,
+            'group_id': group_id,
             'timestamp': datetime.utcnow().isoformat()
         }
         
@@ -288,7 +340,7 @@ def process_uploaded_file(task: Dict):
         # Update file status to failed
         try:
             db.file_uploads.update_one(
-                {'_id': ObjectId(file_id)},
+                {'_id': file_id},
                 {
                     '$set': {
                         'upload_status': 'failed',
@@ -319,22 +371,27 @@ def process_uploaded_file(task: Dict):
 
 
 def process_chat_task(task: Dict):
-    """Process chat retrieval task"""
+    """Process chat retrieval task with group-based filtering"""
     try:
         start_time = time.time()
         
-        # Apply filters if group_id is specified
-        filters = None
-        if task.get('group_id') and task['group_id'] != 'general':
-            filters = {'group_id': task['group_id']}
+        # Get group_id from task (defaults to 'general' if not specified)
+        group_id = task.get('group_id', 'general')
         
-        logger.info(f"Processing chat query: '{task['message'][:100]}...' with filters: {filters}")
+        logger.info(f"Processing chat query: '{task['message'][:100]}...' for group: {group_id}")
         
-        # Retrieve using advanced pipeline
+        # Create retriever with Elasticsearch support
+        retriever = HybridRetriever(
+            chroma_client=chroma_client,
+            es_client=es_client
+        )
+        
+        # Retrieve using advanced pipeline with group filtering
         results = rag_pipeline.retrieve(
             query=task['message'],
+            retriever=retriever,
             k=5,
-            filters=filters
+            group_id=group_id
         )
         
         # Format results for response
@@ -358,6 +415,7 @@ def process_chat_task(task: Dict):
         result = {
             'task_id': task['id'],
             'documents': documents,
+            'group_id': group_id,
             'retrieval_time_ms': retrieval_time,
             'timestamp': datetime.utcnow().isoformat()
         }
@@ -371,10 +429,7 @@ def process_chat_task(task: Dict):
         except:
             logger.warning("Failed to store retrieval result in Redis")
         
-        # Log retrieval performance
-        log_retrieval_performance(task['message'], len(documents), retrieval_time)
-        
-        logger.info(f"Retrieved {len(documents)} documents in {retrieval_time}ms")
+        logger.info(f"Retrieved {len(documents)} documents in {retrieval_time}ms for group {group_id}")
         
     except Exception as e:
         logger.error(f"Chat task processing failed: {e}")
@@ -382,6 +437,7 @@ def process_chat_task(task: Dict):
         error_result = {
             'task_id': task['id'],
             'error': str(e),
+            'group_id': task.get('group_id', 'general'),
             'timestamp': datetime.utcnow().isoformat()
         }
         try:
@@ -404,15 +460,19 @@ def process_embedding_task(task: Dict):
         response_embedding = embedding_model.encode(task['response']).tolist()
         
         # Update MongoDB with embeddings
+        update_data = {
+            'query_embedding': query_embedding,
+            'response_embedding': response_embedding,
+            'embeddings_computed_at': datetime.utcnow()
+        }
+        
+        # Add group_id if present in task
+        if 'group_id' in task:
+            update_data['group_id'] = task['group_id']
+        
         db.messages.update_one(
-            {'_id': ObjectId(task['message_id'])},
-            {
-                '$set': {
-                    'query_embedding': query_embedding,
-                    'response_embedding': response_embedding,
-                    'embeddings_computed_at': datetime.utcnow()
-                }
-            }
+            {'_id': task['message_id']},
+            {'$set': update_data}
         )
         
         logger.info(f"Computed embeddings for message {task['message_id']}")
@@ -422,9 +482,18 @@ def process_embedding_task(task: Dict):
 
 
 def process_indexing_task(task: Dict):
-    """Process document indexing task"""
+    """Process document indexing task with group support"""
     try:
         logger.info(f"Processing indexing task {task['id']} with {len(task.get('documents', []))} documents")
+        
+        # Get group_id from task
+        group_id = task.get('group_id', 'general')
+        
+        # Create retriever with Elasticsearch support
+        retriever = HybridRetriever(
+            chroma_client=chroma_client,
+            es_client=es_client
+        )
         
         success_count = 0
         for doc_data in task.get('documents', []):
@@ -434,10 +503,12 @@ def process_indexing_task(task: Dict):
                     content=doc_data['content'],
                     metadata=doc_data.get('metadata', {})
                 )
-                chunks_created = rag_pipeline.process_document(doc)
+                
+                # Process document with group association
+                chunks_created = rag_pipeline.process_document(doc, retriever, group_id)
                 if chunks_created > 0:
                     success_count += 1
-                logger.info(f"Indexed document {doc_data['id']} with {chunks_created} chunks")
+                logger.info(f"Indexed document {doc_data['id']} with {chunks_created} chunks for group {group_id}")
             except Exception as e:
                 logger.error(f"Error indexing document {doc_data['id']}: {e}")
                 continue
@@ -447,6 +518,7 @@ def process_indexing_task(task: Dict):
             'success': success_count == len(task.get('documents', [])),
             'document_count': success_count,
             'total_requested': len(task.get('documents', [])),
+            'group_id': group_id,
             'timestamp': datetime.utcnow().isoformat()
         }
         
@@ -459,17 +531,89 @@ def process_indexing_task(task: Dict):
         except:
             logger.warning("Failed to store indexing result in Redis")
         
-        logger.info(f"Indexed {success_count}/{len(task.get('documents', []))} documents successfully")
+        logger.info(f"Indexed {success_count}/{len(task.get('documents', []))} documents successfully for group {group_id}")
         
     except Exception as e:
         logger.error(f"Indexing task failed: {e}")
+
+
+def process_group_deletion_task(task: Dict):
+    """Process group deletion task"""
+    try:
+        group_id = task.get('group_id')
+        if not group_id or group_id == 'general':
+            logger.warning("Invalid or general group_id for deletion")
+            return
+        
+        logger.info(f"Processing group deletion for group: {group_id}")
+        
+        # Create retriever with Elasticsearch support
+        retriever = HybridRetriever(
+            chroma_client=chroma_client,
+            es_client=es_client
+        )
+        
+        # Delete all data for the group
+        deletion_counts = rag_pipeline.delete_group_data(group_id, retriever)
+        
+        result = {
+            'task_id': task['id'],
+            'group_id': group_id,
+            'deletion_counts': deletion_counts,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        try:
+            redis_client.setex(
+                f"group_deletion_result:{task['id']}", 
+                60,
+                json.dumps(result)
+            )
+        except:
+            logger.warning("Failed to store group deletion result in Redis")
+        
+        logger.info(f"Completed group deletion for {group_id}: {deletion_counts}")
+        
+    except Exception as e:
+        logger.error(f"Group deletion task failed: {e}")
+
+
+def process_group_stats_task(task: Dict):
+    """Process group statistics request"""
+    try:
+        group_id = task.get('group_id', 'general')
+        logger.info(f"Processing group statistics request for group: {group_id}")
+        
+        # Get statistics for the group
+        stats = rag_pipeline.get_group_statistics(group_id)
+        
+        result = {
+            'task_id': task['id'],
+            'group_id': group_id,
+            'statistics': stats,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        try:
+            redis_client.setex(
+                f"group_stats_result:{task['id']}", 
+                60,
+                json.dumps(result)
+            )
+        except:
+            logger.warning("Failed to store group stats result in Redis")
+        
+        logger.info(f"Completed group statistics for {group_id}")
+        
+    except Exception as e:
+        logger.error(f"Group statistics task failed: {e}")
 
 
 def process_embedding_tasks():
     """
     Main loop to process embedding/retrieval tasks from Redis
     """
-    logger.info("Advanced Embedding service started with MongoDB and ChromaDB v2")
+    logger.info("Advanced Embedding service started with MongoDB, ChromaDB, and Elasticsearch")
     
     # Task type handlers
     task_handlers = {
@@ -477,7 +621,8 @@ def process_embedding_tasks():
         'compute_embeddings': process_embedding_task,
         'process_file': process_uploaded_file,
         'index': process_indexing_task,
-        'analyze_performance': lambda task: process_performance_analysis(task)
+        'delete_group': process_group_deletion_task,
+        'group_stats': process_group_stats_task
     }
     
     while True:
@@ -486,7 +631,8 @@ def process_embedding_tasks():
             task_data = redis_client.brpop([
                 'embedding_tasks', 
                 'file_processing_tasks',
-                'dataset_processing_tasks'
+                'dataset_processing_tasks',
+                'group_management_tasks'
             ], timeout=1)
             
             if task_data:
@@ -510,94 +656,6 @@ def process_embedding_tasks():
         except KeyboardInterrupt:
             logger.info("Shutting down service...")
             break
-
-
-def process_performance_analysis(task: Dict):
-    """Process performance analysis task"""
-    try:
-        logger.info("Analyzing retrieval performance")
-        
-        # Analyze retrieval performance
-        performance_metrics = analyze_retrieval_performance()
-        
-        result = {
-            'task_id': task['id'],
-            'metrics': performance_metrics,
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-        try:
-            redis_client.setex(
-                f"performance_analysis_result:{task['id']}",
-                300,
-                json.dumps(result)
-            )
-        except:
-            logger.warning("Failed to store performance analysis in Redis")
-        
-        logger.info("Completed performance analysis")
-        
-    except Exception as e:
-        logger.error(f"Performance analysis failed: {e}")
-
-
-def analyze_retrieval_performance() -> Dict:
-    """Analyze retrieval performance from stored metrics"""
-    try:
-        # Get recent retrieval metrics from MongoDB
-        performance_data = rag_pipeline.get_performance_metrics(hours=24)
-        
-        # Get query patterns
-        query_patterns = list(db.retrieval_logs.aggregate([
-            {'$match': {'created_at': {'$gte': datetime.utcnow() - timedelta(hours=24)}}},
-            {'$project': {
-                'query_length': {'$strLenCP': '$query'},
-                'response_time_ms': 1
-            }},
-            {'$sort': {'created_at': -1}},
-            {'$limit': 1000}
-        ]))
-        
-        # Analyze Redis metrics
-        redis_metrics = []
-        try:
-            for i in range(min(100, redis_client.llen('retrieval_metrics') if hasattr(redis_client, 'llen') else 0)):
-                metric_json = redis_client.lindex('retrieval_metrics', i)
-                if metric_json:
-                    redis_metrics.append(json.loads(metric_json))
-        except:
-            logger.warning("Failed to get Redis metrics")
-        
-        # Calculate advanced metrics
-        metrics = {
-            'database_metrics': performance_data,
-            'query_patterns': {
-                'avg_query_length': np.mean([p['query_length'] for p in query_patterns]) if query_patterns else 0,
-                'query_length_vs_response_time_correlation': calculate_correlation(
-                    [p['query_length'] for p in query_patterns],
-                    [p['response_time_ms'] for p in query_patterns]
-                ) if query_patterns else 0
-            },
-            'redis_metrics': {
-                'total_queries': len(redis_metrics),
-                'avg_initial_score': np.mean([m.get('avg_initial_score', 0) for m in redis_metrics]) if redis_metrics else 0,
-                'avg_rerank_score': np.mean([m.get('avg_rerank_score', 0) for m in redis_metrics]) if redis_metrics else 0,
-                'avg_final_score': np.mean([m.get('avg_final_score', 0) for m in redis_metrics]) if redis_metrics else 0,
-                'chunk_type_distribution': get_chunk_type_distribution(redis_metrics)
-            },
-            'system_health': {
-                'chroma_status': check_chroma_health(),
-                'redis_status': check_redis_health(),
-                'mongodb_status': check_mongodb_health(),
-                'embedding_model_status': check_embedding_model_health()
-            }
-        }
-        
-        return metrics
-        
-    except Exception as e:
-        logger.error(f"Error analyzing performance: {e}")
-        return {'error': str(e)}
 
 
 def calculate_correlation(x_values: List[float], y_values: List[float]) -> float:
@@ -626,7 +684,27 @@ def get_chunk_type_distribution(metrics: List[Dict]) -> Dict[str, int]:
 def check_chroma_health() -> bool:
     """Check ChromaDB health"""
     try:
-        return rag_pipeline.retriever.health_check() if rag_pipeline else False
+        # Create a temporary retriever to check health
+        retriever = HybridRetriever(
+            chroma_client=chroma_client,
+            es_client=es_client
+        )
+        health_status = retriever.health_check()
+        return health_status.get('chromadb', False)
+    except:
+        return False
+
+
+def check_elasticsearch_health() -> bool:
+    """Check Elasticsearch health"""
+    try:
+        # Create a temporary retriever to check health
+        retriever = HybridRetriever(
+            chroma_client=chroma_client,
+            es_client=es_client
+        )
+        health_status = retriever.health_check()
+        return health_status.get('elasticsearch', False)
     except:
         return False
 
@@ -658,29 +736,54 @@ def check_embedding_model_health() -> bool:
         return False
 
 
-def get_total_indexed_documents() -> int:
-    """Get total number of indexed documents"""
+def get_total_indexed_documents(group_id: Optional[str] = None) -> int:
+    """Get total number of indexed documents, optionally filtered by group"""
     try:
-        return db.indexed_documents.count_documents({})
+        query_filter = {}
+        if group_id and group_id != "general":
+            query_filter['group_id'] = group_id
+        return db.indexed_documents.count_documents(query_filter)
     except:
         return 0
 
 
-def get_total_chunks() -> int:
-    """Get total number of chunks"""
+def get_total_chunks(group_id: Optional[str] = None) -> int:
+    """Get total number of chunks, optionally filtered by group"""
     try:
-        return db.document_chunks.count_documents({})
+        query_filter = {}
+        if group_id and group_id != "general":
+            query_filter['group_id'] = group_id
+        return db.document_chunks.count_documents(query_filter)
     except:
         return 0
 
 
-def get_recent_query_count() -> int:
-    """Get count of queries in last 24 hours"""
+def get_recent_query_count(group_id: Optional[str] = None) -> int:
+    """Get count of queries in last 24 hours, optionally filtered by group"""
     try:
         from_date = datetime.utcnow() - timedelta(hours=24)
-        return db.retrieval_logs.count_documents({'created_at': {'$gte': from_date}})
+        query_filter = {'created_at': {'$gte': from_date}}
+        if group_id and group_id != "general":
+            query_filter['group_id'] = group_id
+        return db.retrieval_logs.count_documents(query_filter)
     except:
         return 0
+
+
+def get_elasticsearch_index_stats() -> Dict:
+    """Get Elasticsearch index statistics"""
+    try:
+        stats = es_client.indices.stats(index=ELASTICSEARCH_INDEX)
+        index_stats = stats.get('indices', {}).get(ELASTICSEARCH_INDEX, {})
+        
+        return {
+            'document_count': index_stats.get('total', {}).get('docs', {}).get('count', 0),
+            'store_size_bytes': index_stats.get('total', {}).get('store', {}).get('size_in_bytes', 0),
+            'indexing_total': index_stats.get('total', {}).get('indexing', {}).get('index_total', 0),
+            'search_query_total': index_stats.get('total', {}).get('search', {}).get('query_total', 0)
+        }
+    except:
+        return {}
 
 
 def health_check() -> Dict:
@@ -689,7 +792,8 @@ def health_check() -> Dict:
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
         'services': {
-            'chroma': check_chroma_health(),
+            'chromadb': check_chroma_health(),
+            'elasticsearch': check_elasticsearch_health(),
             'redis': check_redis_health(),
             'mongodb': check_mongodb_health(),
             'embedding_model': check_embedding_model_health()
@@ -697,20 +801,24 @@ def health_check() -> Dict:
         'metrics': {
             'total_indexed_documents': get_total_indexed_documents(),
             'total_chunks': get_total_chunks(),
-            'recent_queries': get_recent_query_count()
+            'recent_queries': get_recent_query_count(),
+            'elasticsearch_stats': get_elasticsearch_index_stats()
         },
         'configuration': {
             'embedding_model': EMBEDDING_MODEL,
             'reranker_model': RERANKER_MODEL,
             'chroma_persistent': CHROMA_PERSISTENT,
-            'mongo_database': MONGO_DATABASE
+            'mongo_database': MONGO_DATABASE,
+            'elasticsearch_host': ELASTICSEARCH_HOST,
+            'elasticsearch_port': ELASTICSEARCH_PORT,
+            'elasticsearch_index': ELASTICSEARCH_INDEX
         }
     }
 
 
 def cleanup_services():
     """Cleanup services on shutdown"""
-    global mongo_client, redis_client
+    global mongo_client, redis_client, es_client
     
     logger.info("Cleaning up services...")
     
@@ -725,6 +833,13 @@ def cleanup_services():
         if redis_client and hasattr(redis_client, 'close'):
             redis_client.close()
             logger.info("Redis connection closed")
+    except:
+        pass
+    
+    try:
+        if es_client and hasattr(es_client, 'close'):
+            es_client.close()
+            logger.info("Elasticsearch connection closed")
     except:
         pass
 

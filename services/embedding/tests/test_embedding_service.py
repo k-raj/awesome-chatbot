@@ -250,44 +250,35 @@ class TestFileProcessingRedisFlow(RedisIntegrationTestBase):
     def test_file_processing_task_submission(self):
         """Test file processing task submission and result retrieval"""
         
-        # Create a temporary test file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            test_content = """
-            Machine Learning Introduction
+        for test_file in ["about_amazon.pdf", "tech_screen.pdf","ml_jd.docx","food_safety.pdf"]:
+            # Create a temporary test file
+            test_file_path = f"./tests/test_data/{test_file}"
+            with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
+                with open(test_file_path, 'rb') as src:
+                    f.write(src.read())
+                f.flush()
+                temp_file_path = f.name
             
-            Machine learning is a powerful subset of artificial intelligence.
-            It enables systems to automatically learn and improve from experience.
-            
-            Key concepts:
-            - Supervised learning
-            - Unsupervised learning  
-            - Reinforcement learning
-            """
-            f.write(test_content)
-            f.flush()
-            temp_file_path = f.name
-        
-        try:
-            # 1. Submit file processing task
-            file_task = {
-                'file_id': str(ObjectId()),
-                'file_path': temp_file_path,
-                'file_type': 'txt',
-                'group_id': 'test_group',
-                'filename': 'ml_intro.txt',
-                'type': 'process_file',
-                'timestamp': datetime.utcnow().isoformat()
-            }
-            
-            # Push to file processing queue
-            self.redis_client.lpush('file_processing_tasks', json.dumps(file_task))
-            result_key = f"file_processing_result:{file_task['file_id']}"
-            stored_result = self.fetch_results( self.redis_client, result_key, timeout=300)
-            self.assertGreater(stored_result['chunks_count'], 0)
-            
-        finally:
-            # Clean up temp file
-            os.unlink(temp_file_path)
+            try:
+                # 1. Submit file processing task
+                file_task = {
+                    'file_id': str(ObjectId()),
+                    'file_path': temp_file_path,
+                    'group_id': 'test_group',
+                    'filename': test_file_path,
+                    'type': 'process_file',
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                
+                # Push to file processing queue
+                self.redis_client.lpush('file_processing_tasks', json.dumps(file_task))
+                result_key = f"file_processing_result:{file_task['file_id']}"
+                stored_result = self.fetch_results( self.redis_client, result_key, timeout=300)
+                self.assertGreater(stored_result['chunks_count'], 0)
+                
+            finally:
+                # Clean up temp file
+                os.unlink(temp_file_path)
     
     def test_file_processing_error_handling(self):
         """Test file processing error scenario"""
@@ -296,7 +287,7 @@ class TestFileProcessingRedisFlow(RedisIntegrationTestBase):
         error_task = {
             'file_id': str(ObjectId()),
             'file_path': '/nonexistent/file.txt',
-            'file_type': 'txt',
+            'filename': 'something',
             'group_id': 'test_group',
             'type': 'process_file'
         }

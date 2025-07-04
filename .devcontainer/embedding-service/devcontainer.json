@@ -40,27 +40,6 @@
     }
   },
   
-  // Port forwarding
-  "forwardPorts": [8000, 6379, 27017, 8003],
-  "portsAttributes": {
-    "8000": {
-      "label": "ChromaDB",
-      "onAutoForward": "notify"
-    },
-    "6379": {
-      "label": "Redis", 
-      "onAutoForward": "silent"
-    },
-    "27017": {
-      "label": "MongoDB",
-      "onAutoForward": "silent"
-    },
-    "8003": {
-      "label": "Embedding Service",
-      "onAutoForward": "notify"
-    }
-  },
-  
   // Simplified post-create command
   // "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt",
   "remoteUser": "root",

@@ -418,6 +418,95 @@ try {
         }
     });
 
+    // 13. Users Collection (for user management and group access)
+    createCollectionIfNotExists('users', {
+        validator: {
+            $jsonSchema: {
+                bsonType: 'object',
+                required: ['_id', 'username', 'email', 'created_at'],
+                properties: {
+                    _id: { bsonType: 'string' },
+                    username: { bsonType: 'string' },
+                    email: { bsonType: 'string' },
+                    password_hash: { bsonType: 'string' },
+                    first_name: { bsonType: 'string' },
+                    last_name: { bsonType: 'string' },
+                    is_active: { bsonType: 'bool' },
+                    is_admin: { bsonType: 'bool' },
+                    group_ids: { 
+                        bsonType: 'array',
+                        items: { bsonType: 'string' }
+                    },
+                    default_group_id: { bsonType: 'string' },
+                    preferences: { 
+                        bsonType: 'object',
+                        properties: {
+                            theme: { bsonType: 'string' },
+                            language: { bsonType: 'string' },
+                            notifications: { bsonType: 'bool' },
+                            model_preference: { bsonType: 'string' },
+                            max_context_length: { bsonType: 'int' }
+                        }
+                    },
+                    api_key: { bsonType: 'string' },
+                    last_login: { bsonType: 'date' },
+                    login_count: { bsonType: 'int' },
+                    profile_picture: { bsonType: 'string' },
+                    metadata: { bsonType: 'object' },
+                    created_at: { bsonType: 'date' },
+                    updated_at: { bsonType: 'date' }
+                }
+            }
+        }
+    });
+    // 14. User Group Permissions Collection (for fine-grained access control)
+    createCollectionIfNotExists('user_group_permissions', {
+        validator: {
+            $jsonSchema: {
+                bsonType: 'object',
+                required: ['_id', 'user_id', 'group_id', 'permission_level', 'created_at'],
+                properties: {
+                    _id: { bsonType: 'string' },
+                    user_id: { bsonType: 'string' },
+                    group_id: { bsonType: 'string' },
+                    permission_level: { 
+                        bsonType: 'string',
+                        enum: ['read', 'write', 'admin', 'owner']
+                    },
+                    can_upload_files: { bsonType: 'bool' },
+                    can_delete_messages: { bsonType: 'bool' },
+                    can_invite_users: { bsonType: 'bool' },
+                    can_modify_settings: { bsonType: 'bool' },
+                    granted_by: { bsonType: 'string' },
+                    expires_at: { bsonType: 'date' },
+                    created_at: { bsonType: 'date' },
+                    updated_at: { bsonType: 'date' }
+                }
+            }
+        }
+    });
+    // 15. BM25 Index Collection (for hybrid retrieval)
+    createCollectionIfNotExists('bm25_index', {
+        validator: {
+            $jsonSchema: {
+                bsonType: 'object',
+                required: ['_id', 'chunk_id', 'term_frequencies', 'created_at'],
+                properties: {
+                    _id: { bsonType: 'string' },
+                    chunk_id: { bsonType: 'string' },
+                    document_id: { bsonType: 'string' },
+                    term_frequencies: { 
+                        bsonType: 'object' // word -> frequency mapping
+                    },
+                    document_length: { bsonType: 'int' },
+                    unique_terms: { bsonType: 'int' },
+                    processed_text: { bsonType: 'string' },
+                    created_at: { bsonType: 'date' },
+                    updated_at: { bsonType: 'date' }
+                }
+            }
+        }
+    });
     // =============================================================================
     // CREATE INDEXES FOR PERFORMANCE OPTIMIZATION
     // =============================================================================
@@ -511,6 +600,25 @@ try {
     createIndexIfNotExists(db.system_logs, { 'user_id': 1 });
     createIndexIfNotExists(db.system_logs, { 'error_code': 1 });
 
+    // Users Indexes
+    createIndexIfNotExists(db.users, { 'username': 1 }, { unique: true });
+    createIndexIfNotExists(db.users, { 'email': 1 }, { unique: true });
+    createIndexIfNotExists(db.users, { 'api_key': 1 }, { unique: true, sparse: true });
+    createIndexIfNotExists(db.users, { 'group_ids': 1 });
+    createIndexIfNotExists(db.users, { 'is_active': 1 });
+    createIndexIfNotExists(db.users, { 'last_login': -1 });
+    createIndexIfNotExists(db.users, { 'created_at': -1 });
+
+    // User Group Permissions Indexes
+    createIndexIfNotExists(db.user_group_permissions, { 'user_id': 1, 'group_id': 1 }, { unique: true });
+    createIndexIfNotExists(db.user_group_permissions, { 'group_id': 1 });
+    createIndexIfNotExists(db.user_group_permissions, { 'permission_level': 1 });
+    createIndexIfNotExists(db.user_group_permissions, { 'expires_at': 1 });
+
+    // BM25 Index Indexes
+    createIndexIfNotExists(db.bm25_index, { 'chunk_id': 1 }, { unique: true });
+    createIndexIfNotExists(db.bm25_index, { 'document_id': 1 });
+    createIndexIfNotExists(db.bm25_index, { 'document_length': 1 });
 
     // =============================================================================
     // INSERT INITIAL DATA
@@ -579,6 +687,58 @@ try {
         }
     } catch (error) {
         print(`Default model configurations creation handled: ${error.message}`);
+    }
+
+    // Create default admin user
+    try {
+        if (db.users.countDocuments() === 0) {
+            const defaultAdminId = 'user-007';
+            db.users.insertOne({
+                _id: 'user007-uid',
+                username: 'user007',
+                email: 'user1@ragchatbot.local',
+                password_hash: '$2b$12$dummy.hash.for.initial.setup', // Should be changed on first login
+                first_name: 'user',
+                last_name: '007',
+                is_active: true,
+                is_admin: true,
+                group_ids: ['default'],
+                default_group_id: 'default',
+                preferences: {
+                    theme: 'dark',
+                    language: 'en',
+                    notifications: true,
+                    model_preference: 'auto',
+                    max_context_length: 2048
+                },
+                login_count: 0,
+                metadata: {
+                    created_by: 'system',
+                    account_type: 'system_admin'
+                },
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            // Grant admin permissions to default group
+            db.user_group_permissions.insertOne({
+                _id: 'user007-default-group',
+                user_id: user007-uid,
+                group_id: 'user007-default-group',
+                permission_level: 'owner',
+                can_upload_files: true,
+                can_delete_messages: true,
+                can_invite_users: true,
+                can_modify_settings: true,
+                granted_by: 'system',
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            print('Created default admin user and permissions');
+        }
+    } catch (error) {
+        print(`Default admin user creation handled: ${error.message}`);
     }
 
     // =============================================================================
