@@ -13,7 +13,7 @@
     "PYTHONPATH": "/app"
   },
   
-
+  
   // Add required features
   "features": {
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},

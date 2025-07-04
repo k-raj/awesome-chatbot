@@ -7,7 +7,7 @@ import os
 import json
 import time
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import redis
 import numpy as np
@@ -53,7 +53,7 @@ ELASTICSEARCH_HOST = os.environ.get('ELASTICSEARCH_HOST', 'localhost')
 ELASTICSEARCH_PORT = int(os.environ.get('ELASTICSEARCH_PORT', '9200'))
 ELASTICSEARCH_USERNAME = os.environ.get('ELASTICSEARCH_USERNAME', None)
 ELASTICSEARCH_PASSWORD = os.environ.get('ELASTICSEARCH_PASSWORD', None)
-ELASTICSEARCH_INDEX = os.environ.get('ELASTICSEARCH_INDEX', 'rag_chunks')
+ELASTICSEARCH_INDEX = os.environ.get('cluster.name', 'rag-elastic-cluster')
 
 # Global variables for services
 redis_client = None
