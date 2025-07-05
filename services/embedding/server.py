@@ -288,14 +288,8 @@ def process_uploaded_file(task: Dict):
             }
         )
         
-        # Create retriever with Elasticsearch support
-        retriever = HybridRetriever(
-            chroma_client=chroma_client,
-            es_client=es_client
-        )
-        
         # Process with advanced pipeline (group-aware)
-        chunks_count = rag_pipeline.process_document(doc, retriever, group_id)
+        chunks_count = rag_pipeline.process_document(doc, group_id)
         
         # Update file status in MongoDB
         db.file_uploads.update_one(
@@ -380,16 +374,9 @@ def process_chat_task(task: Dict):
         
         logger.info(f"Processing chat query: '{task['message'][:100]}...' for group: {group_id}")
         
-        # Create retriever with Elasticsearch support
-        retriever = HybridRetriever(
-            chroma_client=chroma_client,
-            es_client=es_client
-        )
-        
         # Retrieve using advanced pipeline with group filtering
         results = rag_pipeline.retrieve(
             query=task['message'],
-            retriever=retriever,
             k=5,
             group_id=group_id
         )
@@ -489,12 +476,7 @@ def process_indexing_task(task: Dict):
         # Get group_id from task
         group_id = task.get('group_id', 'general')
         
-        # Create retriever with Elasticsearch support
-        retriever = HybridRetriever(
-            chroma_client=chroma_client,
-            es_client=es_client
-        )
-        
+
         success_count = 0
         for doc_data in task.get('documents', []):
             try:
@@ -505,7 +487,7 @@ def process_indexing_task(task: Dict):
                 )
                 
                 # Process document with group association
-                chunks_created = rag_pipeline.process_document(doc, retriever, group_id)
+                chunks_created = rag_pipeline.process_document(doc, group_id)
                 if chunks_created > 0:
                     success_count += 1
                 logger.info(f"Indexed document {doc_data['id']} with {chunks_created} chunks for group {group_id}")
@@ -547,14 +529,9 @@ def process_group_deletion_task(task: Dict):
         
         logger.info(f"Processing group deletion for group: {group_id}")
         
-        # Create retriever with Elasticsearch support
-        retriever = HybridRetriever(
-            chroma_client=chroma_client,
-            es_client=es_client
-        )
-        
+
         # Delete all data for the group
-        deletion_counts = rag_pipeline.delete_group_data(group_id, retriever)
+        deletion_counts = rag_pipeline.delete_group_data(group_id)
         
         result = {
             'task_id': task['id'],
@@ -684,12 +661,7 @@ def get_chunk_type_distribution(metrics: List[Dict]) -> Dict[str, int]:
 def check_chroma_health() -> bool:
     """Check ChromaDB health"""
     try:
-        # Create a temporary retriever to check health
-        retriever = HybridRetriever(
-            chroma_client=chroma_client,
-            es_client=es_client
-        )
-        health_status = retriever.health_check()
+        health_status = rag_pipeline.retriever.health_check()
         return health_status.get('chromadb', False)
     except:
         return False
@@ -698,12 +670,7 @@ def check_chroma_health() -> bool:
 def check_elasticsearch_health() -> bool:
     """Check Elasticsearch health"""
     try:
-        # Create a temporary retriever to check health
-        retriever = HybridRetriever(
-            chroma_client=chroma_client,
-            es_client=es_client
-        )
-        health_status = retriever.health_check()
+        health_status = rag_pipeline.retriever.health_check()
         return health_status.get('elasticsearch', False)
     except:
         return False

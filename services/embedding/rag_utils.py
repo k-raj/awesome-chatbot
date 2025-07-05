@@ -518,7 +518,7 @@ class HybridRetriever:
         try:
             # Try persistent client first (recommended for production)
             client = chromadb.PersistentClient(
-                path="../../app_data/chroma_db",
+                path="/app_data/chroma_db",
                 settings=Settings(
                     anonymized_telemetry=False,
                     allow_reset=True
@@ -824,6 +824,10 @@ class AdvancedRAGPipeline:
         
         # Initialize components
         self.chunker = SemanticChunker()
+        self.retriever = HybridRetriever(
+            chroma_client=chroma_client,
+            es_client=es_client,
+        )
         logger.info("Advanced RAG pipeline initialized with MongoDB and Elasticsearch")
     
     def _init_collections(self):
@@ -836,14 +840,7 @@ class AdvancedRAGPipeline:
             self.documents_collection.create_index('indexed_at')
             self.documents_collection.create_index('group_id')  # Added group_id index
             
-            # Chunks collection
-            self.chunks_collection = self.db['document_chunks']
-            self.chunks_collection.create_index('document_id')
-            self.chunks_collection.create_index('chunk_type')
-            self.chunks_collection.create_index('group_id')  # Added group_id index
-            self.chunks_collection.create_index([('content', TEXT)])
-            self.chunks_collection.create_index('created_at')
-            
+
             # Retrieval logs collection
             self.retrieval_logs_collection = self.db['retrieval_logs']
             self.retrieval_logs_collection.create_index('created_at')
@@ -860,7 +857,7 @@ class AdvancedRAGPipeline:
             logger.error(f"Failed to initialize MongoDB collections: {e}")
             raise
     
-    def process_document(self, document: Document, retriever: HybridRetriever, group_id: str = "general") -> int:
+    def process_document(self, document: Document, group_id: str = "general") -> int:
         """Process and index a document with group association"""
         
         try:
@@ -869,7 +866,7 @@ class AdvancedRAGPipeline:
             logger.info(f"Created {len(chunks)} chunks for document {document.id} in group {group_id}")
             
             # Index chunks
-            retriever.index_chunks(chunks)
+            self.retriever.index_chunks(chunks)
             
             # Store in MongoDB
             self._store_chunks_mongodb(document, chunks, group_id)
@@ -880,8 +877,8 @@ class AdvancedRAGPipeline:
             logger.error(f"Failed to process document {document.id}: {e}")
             raise
 
-    def _store_chunks_mongodb(self, document: Document, chunks: List[Chunk], group_id: str):
-        """Store document and chunks in MongoDB with group association"""
+    def _store_indexing_status_mongodb(self, document: Document, chunks: List[Chunk], group_id: str):
+        """Store document  in MongoDB with group association"""
         try:
             # Store document metadata
             doc_data = document.to_dict()
@@ -907,21 +904,20 @@ class AdvancedRAGPipeline:
     
     def retrieve(self, 
                 query: str,
-                retriever: HybridRetriever,
                 k: int = 5,
                 group_id: Optional[str] = None) -> List[Dict]:
         """Retrieve relevant chunks for a query with group filtering"""
         
         try:
             # Hybrid search with group filtering
-            candidates = retriever.hybrid_search(
+            candidates = self.retriever.hybrid_search(
                 query=query,
                 k=20,  # Get more candidates for reranking
                 group_id=group_id
             )
             
             # Rerank
-            reranked_results = retriever.rerank(
+            reranked_results =  self.retriever.rerank(
                 query=query,
                 candidates=candidates,
                 top_k=k
@@ -988,13 +984,13 @@ class AdvancedRAGPipeline:
             logger.error(f"Document search failed: {e}")
             return []
     
-    def delete_group_data(self, group_id: str, retriever: HybridRetriever) -> Dict[str, int]:
+    def delete_group_data(self, group_id: str) -> Dict[str, int]:
         """Delete all data for a specific group"""
         try:
             deletion_counts = {}
             
             # Delete from retriever (ChromaDB + Elasticsearch)
-            retriever_counts = retriever.delete_by_group(group_id)
+            retriever_counts = self.retriever.delete_by_group(group_id)
             deletion_counts.update(retriever_counts)
             
             # Delete from MongoDB
@@ -1084,7 +1080,7 @@ def get_elasticsearch_connection(host: str, port: int, username: str = None, pas
     try:
         # Build connection configuration
         es_config = {
-            'hosts': [{'host': host, 'port': port}],
+            'hosts': [{'host': host, 'port': port, 'scheme': 'http'}],
             'timeout': 30,
             'max_retries': 3,
             'retry_on_timeout': True
@@ -1130,7 +1126,7 @@ def initialize_chroma_client(host: str = "localhost", port: int = 8000, use_pers
         if use_persistent:
             # Use persistent client (recommended for production)
             client = chromadb.PersistentClient(
-                path="../../app_data/chroma_db",
+                path="/app_data/chroma_db",
                 settings=Settings(
                     anonymized_telemetry=False,
                     allow_reset=True

@@ -227,31 +227,6 @@ try {
         }
     });
 
-    // 6. Document Chunks Collection (for semantic chunking)
-    createCollectionIfNotExists('document_chunks', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'document_id', 'content', 'created_at'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    document_id: { bsonType: 'string' },
-                    content: { bsonType: 'string' },
-                    chunk_type: { 
-                        bsonType: 'string',
-                        enum: ['paragraph', 'heading', 'list', 'table', 'code', 'other']
-                    },
-                    chunk_index: { bsonType: 'int' },
-                    start_idx: { bsonType: 'int' },
-                    end_idx: { bsonType: 'int' },
-                    token_count: { bsonType: 'int' },
-                    embedding_model: { bsonType: 'string' },
-                    metadata: { bsonType: 'object' },
-                    created_at: { bsonType: 'date' }
-                }
-            }
-        }
-    });
 
     // 7. File Uploads Collection (enhanced)
     createCollectionIfNotExists('file_uploads', {
@@ -286,90 +261,6 @@ try {
         }
     });
 
-    // =============================================================================
-    // ADVANCED RAG SYSTEM COLLECTIONS
-    // =============================================================================
-
-    // 8. Retrieval Logs Collection (for performance monitoring)
-    createCollectionIfNotExists('retrieval_logs', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'query', 'num_results', 'created_at'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    session_id: { bsonType: 'string' },
-                    query: { bsonType: 'string' },
-                    query_embedding: { bsonType: 'array' },
-                    num_results: { bsonType: 'int' },
-                    retrieval_method: { 
-                        bsonType: 'string',
-                        enum: ['vector', 'bm25', 'hybrid']
-                    },
-                    vector_weight: { bsonType: 'double' },
-                    bm25_weight: { bsonType: 'double' },
-                    response_time_ms: { bsonType: 'int' },
-                    avg_initial_score: { bsonType: 'double' },
-                    avg_rerank_score: { bsonType: 'double' },
-                    avg_final_score: { bsonType: 'double' },
-                    chunk_types: { bsonType: 'array' },
-                    filters: { bsonType: 'object' },
-                    reranker_model: { bsonType: 'string' },
-                    embedding_model: { bsonType: 'string' },
-                    created_at: { bsonType: 'date' }
-                }
-            }
-        }
-    });
-
-    // 9. Performance Metrics Collection
-    createCollectionIfNotExists('performance_metrics', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'metric_type', 'value', 'timestamp'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    metric_type: { 
-                        bsonType: 'string',
-                        enum: ['latency', 'throughput', 'accuracy', 'relevance', 'cache_hit_rate', 'token_usage']
-                    },
-                    value: { bsonType: 'double' },
-                    unit: { bsonType: 'string' },
-                    service: { bsonType: 'string' },
-                    session_id: { bsonType: 'string' },
-                    group_id: { bsonType: 'string' },
-                    metadata: { bsonType: 'object' },
-                    timestamp: { bsonType: 'date' }
-                }
-            }
-        }
-    });
-
-    // 10. Model Configurations Collection
-    createCollectionIfNotExists('model_configurations', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'model_type', 'model_name', 'created_at'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    model_type: { 
-                        bsonType: 'string',
-                        enum: ['embedding', 'llm', 'reranker']
-                    },
-                    model_name: { bsonType: 'string' },
-                    model_version: { bsonType: 'string' },
-                    provider: { bsonType: 'string' },
-                    configuration: { bsonType: 'object' },
-                    is_active: { bsonType: 'bool' },
-                    performance_stats: { bsonType: 'object' },
-                    created_at: { bsonType: 'date' },
-                    updated_at: { bsonType: 'date' }
-                }
-            }
-        }
-    });
 
     // 11. User Sessions Collection (for authentication and tracking)
     createCollectionIfNotExists('user_sessions', {
@@ -392,31 +283,6 @@ try {
         }
     });
 
-    // 12. System Logs Collection (for debugging and monitoring)
-    createCollectionIfNotExists('system_logs', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'level', 'message', 'timestamp'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    level: { 
-                        bsonType: 'string',
-                        enum: ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
-                    },
-                    message: { bsonType: 'string' },
-                    service: { bsonType: 'string' },
-                    component: { bsonType: 'string' },
-                    session_id: { bsonType: 'string' },
-                    user_id: { bsonType: 'string' },
-                    error_code: { bsonType: 'string' },
-                    stack_trace: { bsonType: 'string' },
-                    metadata: { bsonType: 'object' },
-                    timestamp: { bsonType: 'date' }
-                }
-            }
-        }
-    });
 
     // 13. Users Collection (for user management and group access)
     createCollectionIfNotExists('users', {
@@ -459,54 +325,7 @@ try {
             }
         }
     });
-    // 14. User Group Permissions Collection (for fine-grained access control)
-    createCollectionIfNotExists('user_group_permissions', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'user_id', 'group_id', 'permission_level', 'created_at'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    user_id: { bsonType: 'string' },
-                    group_id: { bsonType: 'string' },
-                    permission_level: { 
-                        bsonType: 'string',
-                        enum: ['read', 'write', 'admin', 'owner']
-                    },
-                    can_upload_files: { bsonType: 'bool' },
-                    can_delete_messages: { bsonType: 'bool' },
-                    can_invite_users: { bsonType: 'bool' },
-                    can_modify_settings: { bsonType: 'bool' },
-                    granted_by: { bsonType: 'string' },
-                    expires_at: { bsonType: 'date' },
-                    created_at: { bsonType: 'date' },
-                    updated_at: { bsonType: 'date' }
-                }
-            }
-        }
-    });
-    // 15. BM25 Index Collection (for hybrid retrieval)
-    createCollectionIfNotExists('bm25_index', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'chunk_id', 'term_frequencies', 'created_at'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    chunk_id: { bsonType: 'string' },
-                    document_id: { bsonType: 'string' },
-                    term_frequencies: { 
-                        bsonType: 'object' // word -> frequency mapping
-                    },
-                    document_length: { bsonType: 'int' },
-                    unique_terms: { bsonType: 'int' },
-                    processed_text: { bsonType: 'string' },
-                    created_at: { bsonType: 'date' },
-                    updated_at: { bsonType: 'date' }
-                }
-            }
-        }
-    });
+
     // =============================================================================
     // CREATE INDEXES FOR PERFORMANCE OPTIMIZATION
     // =============================================================================
@@ -548,13 +367,6 @@ try {
     createIndexIfNotExists(db.indexed_documents, { 'indexed_at': -1 });
     createIndexIfNotExists(db.indexed_documents, { 'created_at': -1 });
 
-    // Document Chunks Indexes
-    createIndexIfNotExists(db.document_chunks, { 'document_id': 1, 'chunk_index': 1 });
-    createIndexIfNotExists(db.document_chunks, { 'chunk_type': 1 });
-    createIndexIfNotExists(db.document_chunks, { 'content': 'text' });
-    createIndexIfNotExists(db.document_chunks, { 'token_count': 1 });
-    createIndexIfNotExists(db.document_chunks, { 'embedding_model': 1 });
-    createIndexIfNotExists(db.document_chunks, { 'created_at': -1 });
 
     // File Uploads Indexes
     createIndexIfNotExists(db.file_uploads, { 'filename': 1 });
@@ -566,24 +378,6 @@ try {
     createIndexIfNotExists(db.file_uploads, { 'created_at': -1 });
     createIndexIfNotExists(db.file_uploads, { 'processed_at': -1 });
 
-    // Retrieval Logs Indexes
-    createIndexIfNotExists(db.retrieval_logs, { 'session_id': 1 });
-    createIndexIfNotExists(db.retrieval_logs, { 'query': 'text' });
-    createIndexIfNotExists(db.retrieval_logs, { 'retrieval_method': 1 });
-    createIndexIfNotExists(db.retrieval_logs, { 'response_time_ms': 1 });
-    createIndexIfNotExists(db.retrieval_logs, { 'created_at': -1 });
-
-    // Performance Metrics Indexes
-    createIndexIfNotExists(db.performance_metrics, { 'metric_type': 1, 'timestamp': -1 });
-    createIndexIfNotExists(db.performance_metrics, { 'service': 1, 'timestamp': -1 });
-    createIndexIfNotExists(db.performance_metrics, { 'session_id': 1 });
-    createIndexIfNotExists(db.performance_metrics, { 'group_id': 1 });
-
-    // Model Configurations Indexes
-    createIndexIfNotExists(db.model_configurations, { 'model_type': 1 });
-    createIndexIfNotExists(db.model_configurations, { 'model_name': 1 });
-    createIndexIfNotExists(db.model_configurations, { 'is_active': 1 });
-    createIndexIfNotExists(db.model_configurations, { 'provider': 1 });
 
     // User Sessions Indexes
     createIndexIfNotExists(db.user_sessions, { 'user_id': 1 });
@@ -592,13 +386,6 @@ try {
     createIndexIfNotExists(db.user_sessions, { 'last_activity': -1 });
     createIndexIfNotExists(db.user_sessions, { 'expires_at': 1 });
 
-    // System Logs Indexes
-    createIndexIfNotExists(db.system_logs, { 'level': 1, 'timestamp': -1 });
-    createIndexIfNotExists(db.system_logs, { 'service': 1, 'timestamp': -1 });
-    createIndexIfNotExists(db.system_logs, { 'component': 1 });
-    createIndexIfNotExists(db.system_logs, { 'session_id': 1 });
-    createIndexIfNotExists(db.system_logs, { 'user_id': 1 });
-    createIndexIfNotExists(db.system_logs, { 'error_code': 1 });
 
     // Users Indexes
     createIndexIfNotExists(db.users, { 'username': 1 }, { unique: true });
@@ -609,16 +396,6 @@ try {
     createIndexIfNotExists(db.users, { 'last_login': -1 });
     createIndexIfNotExists(db.users, { 'created_at': -1 });
 
-    // User Group Permissions Indexes
-    createIndexIfNotExists(db.user_group_permissions, { 'user_id': 1, 'group_id': 1 }, { unique: true });
-    createIndexIfNotExists(db.user_group_permissions, { 'group_id': 1 });
-    createIndexIfNotExists(db.user_group_permissions, { 'permission_level': 1 });
-    createIndexIfNotExists(db.user_group_permissions, { 'expires_at': 1 });
-
-    // BM25 Index Indexes
-    createIndexIfNotExists(db.bm25_index, { 'chunk_id': 1 }, { unique: true });
-    createIndexIfNotExists(db.bm25_index, { 'document_id': 1 });
-    createIndexIfNotExists(db.bm25_index, { 'document_length': 1 });
 
     // =============================================================================
     // INSERT INITIAL DATA
@@ -647,47 +424,6 @@ try {
         print(`Default content group creation handled: ${error.message}`);
     }
 
-    // Insert default model configurations
-    try {
-        if (db.model_configurations.countDocuments() === 0) {
-            const defaultModels = [
-                {
-                    _id: 'embedding-default',
-                    model_type: 'embedding',
-                    model_name: process.env.EMBEDDING_MODEL || 'all-MiniLM-L6-v2',
-                    model_version: 'latest',
-                    provider: 'sentence-transformers',
-                    configuration: {
-                        max_seq_length: 512,
-                        normalize_embeddings: true
-                    },
-                    is_active: true,
-                    performance_stats: {},
-                    created_at: new Date(),
-                    updated_at: new Date()
-                },
-                {
-                    _id: 'reranker-default',
-                    model_type: 'reranker',
-                    model_name: process.env.RERANKER_MODEL || 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-                    model_version: 'latest',
-                    provider: 'sentence-transformers',
-                    configuration: {
-                        max_length: 512
-                    },
-                    is_active: true,
-                    performance_stats: {},
-                    created_at: new Date(),
-                    updated_at: new Date()
-                }
-            ];
-            
-            db.model_configurations.insertMany(defaultModels);
-            print('Created default model configurations');
-        }
-    } catch (error) {
-        print(`Default model configurations creation handled: ${error.message}`);
-    }
 
     // Create default admin user
     try {
@@ -719,23 +455,7 @@ try {
                 created_at: new Date(),
                 updated_at: new Date()
             });
-
-            // Grant admin permissions to default group
-            db.user_group_permissions.insertOne({
-                _id: 'user007-default-group',
-                user_id: user007-uid,
-                group_id: 'user007-default-group',
-                permission_level: 'owner',
-                can_upload_files: true,
-                can_delete_messages: true,
-                can_invite_users: true,
-                can_modify_settings: true,
-                granted_by: 'system',
-                created_at: new Date(),
-                updated_at: new Date()
-            });
-
-            print('Created default admin user and permissions');
+            print('Created default user ');
         }
     } catch (error) {
         print(`Default admin user creation handled: ${error.message}`);

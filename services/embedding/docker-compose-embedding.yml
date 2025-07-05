@@ -59,6 +59,7 @@ services:
       - ../../app_data/embedding_service/logs:/app_data/logs:rw
       - ../../app_data/embedding_service/model_cache:/root/.cache/huggingface:rw
       - ../../app_data/embedding_service/spacy_cache:/root/.cache/spacy:rw
+      - ../../app_data/chroma_db:/app_data/chroma_db:rw
       - .:/app:rw
     ports:
       - "${EMBEDDING_SERVICE_PORT:-8003}:8000"  # Optional health check endpoint

@@ -275,7 +275,7 @@ class TestFileProcessingRedisFlow(RedisIntegrationTestBase):
                 result_key = f"file_processing_result:{file_task['file_id']}"
                 stored_result = self.fetch_results( self.redis_client, result_key, timeout=300)
                 self.assertGreater(stored_result['chunks_count'], 0)
-                
+                self.assertEqual(stored_result['status'], 'completed')
             finally:
                 # Clean up temp file
                 os.unlink(temp_file_path)

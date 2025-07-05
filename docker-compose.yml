@@ -35,7 +35,7 @@ services:
     ports:
       - "${CHROMA_PORT:-8000}:8000"
     volumes:
-      - ./app_data/chroma_db_data:/chroma/chroma:rw
+      - ./app_data/chroma_db:/chroma/chroma:rw
     env_file:
       - ./env/${PROFILE:-dev}.env
     environment:
