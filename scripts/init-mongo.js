@@ -197,37 +197,6 @@ try {
     // DOCUMENT MANAGEMENT COLLECTIONS
     // =============================================================================
 
-    // 5. Indexed Documents Collection (for file upload support)
-    createCollectionIfNotExists('indexed_documents', {
-        validator: {
-            $jsonSchema: {
-                bsonType: 'object',
-                required: ['_id', 'content', 'metadata', 'created_at'],
-                properties: {
-                    _id: { bsonType: 'string' },
-                    content: { bsonType: 'string' },
-                    title: { bsonType: 'string' },
-                    source: { bsonType: 'string' },
-                    file_path: { bsonType: 'string' },
-                    file_type: { bsonType: 'string' },
-                    file_size: { bsonType: 'int' },
-                    chunk_count: { bsonType: 'int' },
-                    group_id: { bsonType: 'string' },
-                    uploaded_by: { bsonType: 'string' },
-                    processing_status: { 
-                        bsonType: 'string',
-                        enum: ['pending', 'processing', 'completed', 'failed']
-                    },
-                    metadata: { bsonType: 'object' },
-                    indexed_at: { bsonType: 'date' },
-                    created_at: { bsonType: 'date' },
-                    updated_at: { bsonType: 'date' }
-                }
-            }
-        }
-    });
-
-
     // 7. File Uploads Collection (enhanced)
     createCollectionIfNotExists('file_uploads', {
         validator: {
@@ -251,8 +220,9 @@ try {
                     processing_progress: { bsonType: 'int' }, // 0-100
                     chunks_count: { bsonType: 'int' },
                     error_message: { bsonType: 'string' },
+                    text_length: { bsonType: 'int' },
+                    file_type: { bsonType: 'string' },
                     checksum: { bsonType: 'string' },
-                    metadata: { bsonType: 'object' },
                     created_at: { bsonType: 'date' },
                     processed_at: { bsonType: 'date' },
                     updated_at: { bsonType: 'date' }
@@ -356,16 +326,6 @@ try {
     createIndexIfNotExists(db.user_feedback, { 'user_id': 1, 'created_at': -1 });
     createIndexIfNotExists(db.user_feedback, { 'feedback_type': 1 });
     createIndexIfNotExists(db.user_feedback, { 'rating': 1 });
-
-    // Indexed Documents Indexes
-    createIndexIfNotExists(db.indexed_documents, { 'title': 'text', 'content': 'text' });
-    createIndexIfNotExists(db.indexed_documents, { 'source': 1 });
-    createIndexIfNotExists(db.indexed_documents, { 'file_type': 1 });
-    createIndexIfNotExists(db.indexed_documents, { 'group_id': 1 });
-    createIndexIfNotExists(db.indexed_documents, { 'uploaded_by': 1 });
-    createIndexIfNotExists(db.indexed_documents, { 'processing_status': 1 });
-    createIndexIfNotExists(db.indexed_documents, { 'indexed_at': -1 });
-    createIndexIfNotExists(db.indexed_documents, { 'created_at': -1 });
 
 
     // File Uploads Indexes

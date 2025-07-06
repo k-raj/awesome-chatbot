@@ -7,34 +7,35 @@ services:
       file: ../../docker-compose.yml
       service: mongodb
     networks:
-      - common_network
+      - common_network_embedding
 
   elasticsearch:
     extends:
       file: ../../docker-compose.yml
       service: elasticsearch
     networks:
-      - common_network
+      - common_network_embedding
       
   redis:
     extends:
       file: ../../docker-compose.yml
       service: redis
     networks:
-      - common_network
+      - common_network_embedding
 
   chromadb:
     extends:
       file: ../../docker-compose.yml
       service: chromadb
     networks:
-      - common_network
+      - common_network_embedding
 
   # Main embedding service
   embedding_service:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    ## Uncomment the build section if you want to build the image from a Dockerfile
+    # build: 
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: rag_embedding_service
     image: embedding_service_image
     restart: always
@@ -55,17 +56,16 @@ services:
       
       
     volumes:
-      - ../../app_data/embedding_service/uploads:/app_data/uploads:rw
+      - ../../app_data/file_uploads:/app_data/file_uploads:rw
       - ../../app_data/embedding_service/logs:/app_data/logs:rw
       - ../../app_data/embedding_service/model_cache:/root/.cache/huggingface:rw
-      - ../../app_data/embedding_service/spacy_cache:/root/.cache/spacy:rw
       - ../../app_data/chroma_db:/app_data/chroma_db:rw
       - .:/app:rw
     ports:
       - "${EMBEDDING_SERVICE_PORT:-8003}:8000"  # Optional health check endpoint
     
     networks:
-      - common_network
+      - common_network_embedding
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -79,5 +79,5 @@ services:
 
 # Common network for service communication
 networks:
-  common_network:
+  common_network_embedding:
     driver: bridge

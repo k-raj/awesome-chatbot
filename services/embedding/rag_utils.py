@@ -84,6 +84,7 @@ class Chunk:
             'end_idx': self.end_idx,
             'chunk_type': self.chunk_type,
             'group_id': self.group_id,
+            'filename': self.metadata.get('filename', ''), 
             'metadata': self.metadata,
             'created_at': datetime.utcnow().isoformat()
         }
@@ -109,7 +110,8 @@ class SemanticChunker:
         
         # Initialize tokenizer for accurate token counting
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
-    
+        
+        
     def chunk_document(self, document: Document, group_id: str = "general") -> List[Chunk]:
         """Chunk document preserving semantic boundaries"""
         chunks = []
@@ -119,20 +121,21 @@ class SemanticChunker:
         
         chunk_id = 0
         for section in sections:
-            # Process each section
+            # Process each section, passing document metadata
             section_chunks = self._chunk_section(
                 section['content'],
                 section['type'],
                 document.id,
                 chunk_id,
                 section.get('metadata', {}),
-                group_id
+                group_id,
+                document.metadata  # Pass document metadata including filename
             )
             chunks.extend(section_chunks)
             chunk_id += len(section_chunks)
         
         return chunks
-    
+                       
     def _extract_sections(self, text: str) -> List[Dict]:
         """Extract document sections based on structure"""
         sections = []
@@ -183,12 +186,13 @@ class SemanticChunker:
         return sections
 
     def _chunk_section(self, 
-                    text: str, 
-                    section_type: str,
-                    document_id: str,
-                    start_chunk_id: int,
-                    metadata: Dict,
-                    group_id: str) -> List[Chunk]:
+                text: str, 
+                section_type: str,
+                document_id: str,
+                start_chunk_id: int,
+                metadata: Dict,
+                group_id: str,
+                document_metadata: Dict = None) -> List[Chunk]:  # Add document_metadata parameter
         """Chunk a section while preserving semantic units"""
         chunks = []
         
@@ -220,8 +224,14 @@ class SemanticChunker:
             
             # Check if adding this sentence exceeds max size
             if current_tokens + sentence_tokens > self.max_chunk_size and current_chunk:
-                # Create chunk
+                # Create chunk with enhanced metadata including filename
                 chunk_text = ' '.join(current_chunk)
+                
+                # Merge metadata with document metadata (including filename)
+                enhanced_metadata = {**metadata, 'sentence_count': len(current_chunk)}
+                if document_metadata:
+                    enhanced_metadata.update(document_metadata)
+                
                 chunk = Chunk(
                     id=f"{document_id}_chunk_{start_chunk_id + len(chunks)}",
                     document_id=document_id,
@@ -229,7 +239,7 @@ class SemanticChunker:
                     start_idx=text.find(current_chunk[0]),
                     end_idx=text.find(current_chunk[-1]) + len(current_chunk[-1]),
                     chunk_type=chunk_type,
-                    metadata={**metadata, 'sentence_count': len(current_chunk)},
+                    metadata=enhanced_metadata,  # Now includes filename
                     group_id=group_id
                 )
                 chunks.append(chunk)
@@ -249,6 +259,12 @@ class SemanticChunker:
         # Handle remaining content
         if current_chunk and current_tokens >= self.min_chunk_size:
             chunk_text = ' '.join(current_chunk)
+            
+            # Merge metadata with document metadata (including filename)
+            enhanced_metadata = {**metadata, 'sentence_count': len(current_chunk)}
+            if document_metadata:
+                enhanced_metadata.update(document_metadata)
+            
             chunk = Chunk(
                 id=f"{document_id}_chunk_{start_chunk_id + len(chunks)}",
                 document_id=document_id,
@@ -256,14 +272,14 @@ class SemanticChunker:
                 start_idx=text.find(current_chunk[0]),
                 end_idx=text.find(current_chunk[-1]) + len(current_chunk[-1]),
                 chunk_type=chunk_type,
-                metadata={**metadata, 'sentence_count': len(current_chunk)},
+                metadata=enhanced_metadata,  # Now includes filename
                 group_id=group_id
             )
             chunks.append(chunk)
         
         return chunks
 
-
+    
 def safe_chroma_operation(operation, *args, max_retries=3, **kwargs):
     """Wrapper for safe ChromaDB operations with retry logic"""
     for attempt in range(max_retries):
@@ -297,7 +313,7 @@ class ElasticsearchBM25Retriever:
         self.es_client = es_client
         self.index_name = index_name
         self._ensure_index_exists()
-    
+
     def _ensure_index_exists(self):
         """Create Elasticsearch index if it doesn't exist"""
         try:
@@ -318,6 +334,7 @@ class ElasticsearchBM25Retriever:
                             "end_idx": {"type": "integer"},
                             "chunk_type": {"type": "keyword"},
                             "group_id": {"type": "keyword"},
+                            "filename": {"type": "keyword"},  # Add filename field
                             "metadata": {"type": "object"},
                             "created_at": {"type": "date"}
                         }
@@ -617,7 +634,6 @@ class HybridRetriever:
         if self.es_retriever:
             try:
                 self.es_retriever.index_chunks(chunks)
-                logger.info(f"Successfully indexed {len(chunks)} chunks in Elasticsearch")
             except Exception as e:
                 logger.error(f"Failed to index chunks in Elasticsearch: {e}")
         
@@ -839,13 +855,7 @@ class AdvancedRAGPipeline:
             self.documents_collection.create_index('source')
             self.documents_collection.create_index('indexed_at')
             self.documents_collection.create_index('group_id')  # Added group_id index
-            
-
-            # Retrieval logs collection
-            self.retrieval_logs_collection = self.db['retrieval_logs']
-            self.retrieval_logs_collection.create_index('created_at')
-            self.retrieval_logs_collection.create_index('group_id')  # Added group_id index
-            
+                        
             # Messages collection for embeddings
             self.messages_collection = self.db['messages']
             self.messages_collection.create_index('created_at')
@@ -868,40 +878,12 @@ class AdvancedRAGPipeline:
             # Index chunks
             self.retriever.index_chunks(chunks)
             
-            # Store in MongoDB
-            self._store_chunks_mongodb(document, chunks, group_id)
-            
             return len(chunks)
             
         except Exception as e:
             logger.error(f"Failed to process document {document.id}: {e}")
             raise
 
-    def _store_indexing_status_mongodb(self, document: Document, chunks: List[Chunk], group_id: str):
-        """Store document  in MongoDB with group association"""
-        try:
-            # Store document metadata
-            doc_data = document.to_dict()
-            doc_data.update({
-                'title': document.metadata.get('title', 'Untitled'),
-                'source': document.metadata.get('source', 'unknown'),
-                'chunk_count': len(chunks),
-                'group_id': group_id,  # Add group_id to document
-                'indexed_at': datetime.utcnow()
-            })
-            
-            self.documents_collection.replace_one(
-                {'_id': document.id},
-                doc_data,
-                upsert=True
-            )
-            
-            logger.info(f"Stored document {document.id} with {len(chunks)} chunks in MongoDB for group {group_id}")
-            
-        except Exception as e:
-            logger.error(f"Error storing document in MongoDB: {e}")
-            raise
-    
     def retrieve(self, 
                 query: str,
                 k: int = 5,
@@ -923,65 +905,10 @@ class AdvancedRAGPipeline:
                 top_k=k
             )
             
-            # Log retrieval metrics
-            self._log_retrieval_metrics(query, reranked_results, group_id)
-            
             return reranked_results
             
         except Exception as e:
             logger.error(f"Retrieval failed for query '{query}' in group '{group_id}': {e}")
-            return []
-    
-    def _log_retrieval_metrics(self, query: str, results: List[Dict], group_id: Optional[str] = None):
-        """Log retrieval metrics for analysis with group information"""
-        try:
-            metrics = {
-                'query': query,
-                'group_id': group_id or 'general',
-                'num_results': len(results),
-                'avg_initial_score': np.mean([r['initial_score'] for r in results]) if results else 0,
-                'avg_rerank_score': np.mean([r['rerank_score'] for r in results]) if results else 0,
-                'avg_final_score': np.mean([r['final_score'] for r in results]) if results else 0,
-                'chunk_types': [r['metadata'].get('chunk_type', 'unknown') for r in results],
-                'created_at': datetime.utcnow()
-            }
-            
-            # Store in MongoDB
-            self.retrieval_logs_collection.insert_one(metrics)
-            
-            # Also store in Redis for real-time monitoring
-            self.redis_client.lpush('retrieval_metrics', json.dumps(metrics, default=str))
-            self.redis_client.ltrim('retrieval_metrics', 0, 1000)  # Keep last 1000
-            
-        except Exception as e:
-            logger.warning(f"Failed to log retrieval metrics: {e}")
-    
-    def get_document_by_id(self, document_id: str, group_id: Optional[str] = None) -> Optional[Dict]:
-        """Retrieve a document by ID with optional group filtering"""
-        try:
-            query_filter = {'_id': document_id}
-            if group_id and group_id != "general":
-                query_filter['group_id'] = group_id
-            return self.documents_collection.find_one(query_filter)
-        except Exception as e:
-            logger.error(f"Failed to get document {document_id}: {e}")
-            return None
-    
-    def search_documents(self, text_query: str, group_id: Optional[str] = None, limit: int = 10) -> List[Dict]:
-        """Full-text search on documents with group filtering"""
-        try:
-            query_filter = {'$text': {'$search': text_query}}
-            if group_id and group_id != "general":
-                query_filter['group_id'] = group_id
-            
-            results = self.documents_collection.find(
-                query_filter,
-                {'score': {'$meta': 'textScore'}}
-            ).sort([('score', {'$meta': 'textScore'})]).limit(limit)
-            
-            return list(results)
-        except Exception as e:
-            logger.error(f"Document search failed: {e}")
             return []
     
     def delete_group_data(self, group_id: str) -> Dict[str, int]:
@@ -993,85 +920,15 @@ class AdvancedRAGPipeline:
             retriever_counts = self.retriever.delete_by_group(group_id)
             deletion_counts.update(retriever_counts)
             
-            # Delete from MongoDB
-            # Delete chunks
-            chunk_result = self.chunks_collection.delete_many({'group_id': group_id})
-            deletion_counts['mongodb_chunks'] = chunk_result.deleted_count
-            
-            # Delete documents
-            doc_result = self.documents_collection.delete_many({'group_id': group_id})
-            deletion_counts['mongodb_documents'] = doc_result.deleted_count
-            
-            # Delete retrieval logs
-            log_result = self.retrieval_logs_collection.delete_many({'group_id': group_id})
-            deletion_counts['mongodb_logs'] = log_result.deleted_count
-            
             logger.info(f"Deleted all data for group {group_id}: {deletion_counts}")
             return deletion_counts
             
         except Exception as e:
             logger.error(f"Failed to delete data for group {group_id}: {e}")
             return {}
+
     
-    def get_group_statistics(self, group_id: str) -> Dict:
-        """Get statistics for a specific group"""
-        try:
-            stats = {}
-            
-            # Document count
-            stats['document_count'] = self.documents_collection.count_documents({'group_id': group_id})
-            
-            # Chunk count
-            stats['chunk_count'] = self.chunks_collection.count_documents({'group_id': group_id})
-            
-            # Recent query count (last 24 hours)
-            from_date = datetime.utcnow() - timedelta(hours=24)
-            stats['recent_queries'] = self.retrieval_logs_collection.count_documents({
-                'group_id': group_id,
-                'created_at': {'$gte': from_date}
-            })
-            
-            # Chunk type distribution
-            pipeline = [
-                {'$match': {'group_id': group_id}},
-                {'$group': {'_id': '$chunk_type', 'count': {'$sum': 1}}}
-            ]
-            chunk_types = list(self.chunks_collection.aggregate(pipeline))
-            stats['chunk_types'] = {item['_id']: item['count'] for item in chunk_types}
-            
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Failed to get statistics for group {group_id}: {e}")
-            return {}
-    
-    def get_performance_metrics(self, hours: int = 24, group_id: Optional[str] = None) -> Dict:
-        """Get performance metrics for the last N hours with optional group filtering"""
-        try:
-            from_date = datetime.utcnow() - timedelta(hours=hours)
-            
-            match_filter = {'created_at': {'$gte': from_date}}
-            if group_id and group_id != "general":
-                match_filter['group_id'] = group_id
-            
-            pipeline = [
-                {'$match': match_filter},
-                {'$group': {
-                    '_id': None,
-                    'total_queries': {'$sum': 1},
-                    'avg_results': {'$avg': '$num_results'},
-                    'avg_initial_score': {'$avg': '$avg_initial_score'},
-                    'avg_rerank_score': {'$avg': '$avg_rerank_score'},
-                    'avg_final_score': {'$avg': '$avg_final_score'}
-                }}
-            ]
-            
-            result = list(self.retrieval_logs_collection.aggregate(pipeline))
-            return result[0] if result else {}
-            
-        except Exception as e:
-            logger.error(f"Failed to get performance metrics: {e}")
-            return {}
+
 
 
 # Elasticsearch connection helper

@@ -1,7 +1,7 @@
 # Core RAG System Dependencies
 sentence-transformers==3.0.1
 huggingface_hub==0.33.2
-chromadb==0.4.22
+chromadb==1.0.15
 redis==5.0.1
 pymongo==4.6.1
 elasticsearch==8.11.0

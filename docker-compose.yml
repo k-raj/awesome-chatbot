@@ -24,13 +24,11 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    networks:
-      - common_network
 
 
   # ChromaDB for vector storage
   chromadb:
-    image: chromadb/chroma:${CHROMA_VERSION:-latest}
+    image: chromadb/chroma:1.0.15
     container_name: ${CHROMA_CONTAINER_NAME:-common_chromadb}
     ports:
       - "${CHROMA_PORT:-8000}:8000"
@@ -38,13 +36,6 @@ services:
       - ./app_data/chroma_db:/chroma/chroma:rw
     env_file:
       - ./env/${PROFILE:-dev}.env
-    environment:
-      - CHROMA_HOST=0.0.0.0
-      - CHROMA_PORT=8000
-      - PERSIST_DIRECTORY=/chroma/chroma
-      - CHROMA_AUTH_PROVIDER=${CHROMA_AUTH_PROVIDER:-}
-      - CHROMA_SERVER_AUTHN_CREDENTIALS=${CHROMA_SERVER_AUTHN_CREDENTIALS:-}
-      - CHROMA_SERVER_AUTHN_PROVIDER=${CHROMA_SERVER_AUTHN_PROVIDER:-}
     healthcheck:
       test:
         - CMD
@@ -63,13 +54,11 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks:
-      - common_network
 
 
   # MongoDB - only for development and staging
   mongodb:
-    image: mongo:${MONGODB_VERSION:-6.0}
+    image: mongo:6.0
     container_name: ${MONGODB_CONTAINER_NAME:-common_mongodb}
     env_file:
       - ./env/${PROFILE:-dev}.env
@@ -84,12 +73,11 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    networks:
-      - common_network
+
 
   # Elasticsearch for BM25 search and chunk storage
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTICSEARCH_VERSION:-8.11.0}
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: ${ELASTICSEARCH_CONTAINER_NAME:-common_elasticsearch}
     env_file:
       - ./env/${PROFILE:-dev}.env
@@ -118,5 +106,3 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
-    networks:
-      - common_network

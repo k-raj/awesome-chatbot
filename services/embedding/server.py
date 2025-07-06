@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 REDIS_URL = f"redis://:{os.environ.get('REDIS_PASSWORD', 'password')}@{os.environ.get('REDIS_HOST', 'localhost')}:{os.environ.get('REDIS_PORT', '6379')}/{os.environ.get('REDIS_DB', '0')}"
 CHROMA_HOST = os.environ.get('CHROMA_HOST', 'localhost')
 CHROMA_PORT = int(os.environ.get('CHROMA_PORT', '8000'))
-CHROMA_PERSISTENT = os.environ.get('CHROMA_PERSISTENT', 'true').lower() == 'true'
+CHROMA_PERSISTENT = os.environ.get('CHROMA_PERSISTENT', 'false').lower() == 'true'
 EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
 RERANKER_MODEL = os.environ.get('RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
 
@@ -241,7 +241,6 @@ def get_file_type_from_filename(filename: str) -> str:
     
     return supported_extensions[file_extension]
 
-
 def process_uploaded_file(task: Dict):
     """Process an uploaded file with advanced chunking and indexing"""
     try:
@@ -272,17 +271,17 @@ def process_uploaded_file(task: Dict):
         
         logger.info(f"Extracted {len(text)} characters from file {file_id}")
         
-        # Create document
+        # Create document with filename prominently in metadata
         doc = Document(
-            id=f"upload_{file_id}",
+            id=file_id,
             content=text,
             metadata={
+                'filename': filename,  # Make sure filename is first in metadata
                 'file_id': file_id,
                 'file_type': file_type,
                 'group_id': group_id,
                 'source': 'user_upload',
                 'upload_date': datetime.utcnow().isoformat(),
-                'filename': filename,
                 'file_size': len(text),
                 'processed_by': 'advanced_rag_pipeline'
             }
@@ -301,16 +300,18 @@ def process_uploaded_file(task: Dict):
                     'processed_at': datetime.utcnow(),
                     'text_length': len(text),
                     'file_type': file_type,
+                    'filename': filename,  # Store filename in file_uploads collection too
                     'group_id': group_id  # Store group_id
                 }
             }
         )
             
-        logger.info(f"Successfully processed file {file_id} with {chunks_count} chunks for group {group_id}")
+        logger.info(f"Successfully processed file {file_id} ({filename}) with {chunks_count} chunks for group {group_id}")
         
         # Store result in Redis
         result = {
             'file_id': file_id,
+            'filename': filename,  # Include filename in result
             'status': 'completed',
             'chunks_count': chunks_count,
             'text_length': len(text),
@@ -329,7 +330,7 @@ def process_uploaded_file(task: Dict):
             logger.warning("Failed to store result in Redis")
         
     except Exception as e:
-        logger.error(f"Error processing file {file_id}: {e}")
+        logger.error(f"Error processing file {file_id} ({filename}): {e}")
         
         # Update file status to failed
         try:
@@ -339,7 +340,8 @@ def process_uploaded_file(task: Dict):
                     '$set': {
                         'upload_status': 'failed',
                         'error_message': str(e),
-                        'processed_at': datetime.utcnow()
+                        'processed_at': datetime.utcnow(),
+                        'filename': filename  # Store filename even on failure
                     }
                 }
             )
@@ -349,6 +351,7 @@ def process_uploaded_file(task: Dict):
         # Store error result in Redis
         result = {
             'file_id': file_id,
+            'filename': filename,  # Include filename in error result
             'status': 'failed',
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
@@ -362,7 +365,6 @@ def process_uploaded_file(task: Dict):
             )
         except:
             logger.warning("Failed to store error result in Redis")
-
 
 def process_chat_task(task: Dict):
     """Process chat retrieval task with group-based filtering"""
@@ -384,10 +386,17 @@ def process_chat_task(task: Dict):
         # Format results for response
         documents = []
         for result in results:
+            # Extract filename from metadata if available
+            filename = result.get('metadata', {}).get('filename', 'Unknown')
+            
             documents.append({
                 'id': result['chunk_id'],
                 'content': result['content'],
-                'metadata': result['metadata'],
+                'metadata': {
+                    **result['metadata'],
+                    'filename': filename  # Ensure filename is prominently available
+                },
+                'filename': filename,  # Also add filename at top level for easy access
                 'relevance_score': result['final_score'],
                 'scores': {
                     'initial': result['initial_score'],
@@ -436,89 +445,6 @@ def process_chat_task(task: Dict):
         except:
             logger.warning("Failed to store error result in Redis")
 
-
-def process_embedding_task(task: Dict):
-    """Process embedding computation task"""
-    try:
-        logger.info(f"Computing embeddings for message {task['message_id']}")
-        
-        # Compute embeddings for feedback/fine-tuning
-        query_embedding = embedding_model.encode(task['query']).tolist()
-        response_embedding = embedding_model.encode(task['response']).tolist()
-        
-        # Update MongoDB with embeddings
-        update_data = {
-            'query_embedding': query_embedding,
-            'response_embedding': response_embedding,
-            'embeddings_computed_at': datetime.utcnow()
-        }
-        
-        # Add group_id if present in task
-        if 'group_id' in task:
-            update_data['group_id'] = task['group_id']
-        
-        db.messages.update_one(
-            {'_id': task['message_id']},
-            {'$set': update_data}
-        )
-        
-        logger.info(f"Computed embeddings for message {task['message_id']}")
-        
-    except Exception as e:
-        logger.error(f"Embedding computation failed: {e}")
-
-
-def process_indexing_task(task: Dict):
-    """Process document indexing task with group support"""
-    try:
-        logger.info(f"Processing indexing task {task['id']} with {len(task.get('documents', []))} documents")
-        
-        # Get group_id from task
-        group_id = task.get('group_id', 'general')
-        
-
-        success_count = 0
-        for doc_data in task.get('documents', []):
-            try:
-                doc = Document(
-                    id=doc_data['id'],
-                    content=doc_data['content'],
-                    metadata=doc_data.get('metadata', {})
-                )
-                
-                # Process document with group association
-                chunks_created = rag_pipeline.process_document(doc, group_id)
-                if chunks_created > 0:
-                    success_count += 1
-                logger.info(f"Indexed document {doc_data['id']} with {chunks_created} chunks for group {group_id}")
-            except Exception as e:
-                logger.error(f"Error indexing document {doc_data['id']}: {e}")
-                continue
-        
-        result = {
-            'task_id': task['id'],
-            'success': success_count == len(task.get('documents', [])),
-            'document_count': success_count,
-            'total_requested': len(task.get('documents', [])),
-            'group_id': group_id,
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-        try:
-            redis_client.setex(
-                f"indexing_result:{task['id']}", 
-                60,
-                json.dumps(result)
-            )
-        except:
-            logger.warning("Failed to store indexing result in Redis")
-        
-        logger.info(f"Indexed {success_count}/{len(task.get('documents', []))} documents successfully for group {group_id}")
-        
-    except Exception as e:
-        logger.error(f"Indexing task failed: {e}")
-
-
 def process_group_deletion_task(task: Dict):
     """Process group deletion task"""
     try:
@@ -555,35 +481,7 @@ def process_group_deletion_task(task: Dict):
         logger.error(f"Group deletion task failed: {e}")
 
 
-def process_group_stats_task(task: Dict):
-    """Process group statistics request"""
-    try:
-        group_id = task.get('group_id', 'general')
-        logger.info(f"Processing group statistics request for group: {group_id}")
-        
-        # Get statistics for the group
-        stats = rag_pipeline.get_group_statistics(group_id)
-        
-        result = {
-            'task_id': task['id'],
-            'group_id': group_id,
-            'statistics': stats,
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-        try:
-            redis_client.setex(
-                f"group_stats_result:{task['id']}", 
-                60,
-                json.dumps(result)
-            )
-        except:
-            logger.warning("Failed to store group stats result in Redis")
-        
-        logger.info(f"Completed group statistics for {group_id}")
-        
-    except Exception as e:
-        logger.error(f"Group statistics task failed: {e}")
+
 
 
 def process_embedding_tasks():
@@ -595,11 +493,8 @@ def process_embedding_tasks():
     # Task type handlers
     task_handlers = {
         'chat': process_chat_task,
-        'compute_embeddings': process_embedding_task,
         'process_file': process_uploaded_file,
-        'index': process_indexing_task,
         'delete_group': process_group_deletion_task,
-        'group_stats': process_group_stats_task
     }
     
     while True:
@@ -608,7 +503,6 @@ def process_embedding_tasks():
             task_data = redis_client.brpop([
                 'embedding_tasks', 
                 'file_processing_tasks',
-                'dataset_processing_tasks',
                 'group_management_tasks'
             ], timeout=1)
             
@@ -634,28 +528,6 @@ def process_embedding_tasks():
             logger.info("Shutting down service...")
             break
 
-
-def calculate_correlation(x_values: List[float], y_values: List[float]) -> float:
-    """Calculate correlation coefficient between two lists"""
-    if len(x_values) != len(y_values) or len(x_values) < 2:
-        return 0.0
-    
-    try:
-        x_array = np.array(x_values)
-        y_array = np.array(y_values)
-        correlation_matrix = np.corrcoef(x_array, y_array)
-        return float(correlation_matrix[0, 1])
-    except:
-        return 0.0
-
-
-def get_chunk_type_distribution(metrics: List[Dict]) -> Dict[str, int]:
-    """Get distribution of chunk types from metrics"""
-    chunk_type_counts = {}
-    for metric in metrics:
-        for chunk_type in metric.get('chunk_types', []):
-            chunk_type_counts[chunk_type] = chunk_type_counts.get(chunk_type, 0) + 1
-    return chunk_type_counts
 
 
 def check_chroma_health() -> bool:
@@ -714,28 +586,6 @@ def get_total_indexed_documents(group_id: Optional[str] = None) -> int:
         return 0
 
 
-def get_total_chunks(group_id: Optional[str] = None) -> int:
-    """Get total number of chunks, optionally filtered by group"""
-    try:
-        query_filter = {}
-        if group_id and group_id != "general":
-            query_filter['group_id'] = group_id
-        return db.document_chunks.count_documents(query_filter)
-    except:
-        return 0
-
-
-def get_recent_query_count(group_id: Optional[str] = None) -> int:
-    """Get count of queries in last 24 hours, optionally filtered by group"""
-    try:
-        from_date = datetime.utcnow() - timedelta(hours=24)
-        query_filter = {'created_at': {'$gte': from_date}}
-        if group_id and group_id != "general":
-            query_filter['group_id'] = group_id
-        return db.retrieval_logs.count_documents(query_filter)
-    except:
-        return 0
-
 
 def get_elasticsearch_index_stats() -> Dict:
     """Get Elasticsearch index statistics"""
@@ -767,8 +617,6 @@ def health_check() -> Dict:
         },
         'metrics': {
             'total_indexed_documents': get_total_indexed_documents(),
-            'total_chunks': get_total_chunks(),
-            'recent_queries': get_recent_query_count(),
             'elasticsearch_stats': get_elasticsearch_index_stats()
         },
         'configuration': {
