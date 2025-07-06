@@ -6,6 +6,7 @@ services:
     extends:
       file: ../../docker-compose.yml
       service: mongodb
+    container_name: embedding_mongodb
     networks:
       - common_network_embedding
 
@@ -13,6 +14,7 @@ services:
     extends:
       file: ../../docker-compose.yml
       service: elasticsearch
+    container_name: embedding_elasticsearch
     networks:
       - common_network_embedding
       
@@ -20,6 +22,7 @@ services:
     extends:
       file: ../../docker-compose.yml
       service: redis
+    container_name: embedding_redis
     networks:
       - common_network_embedding
 
@@ -27,6 +30,7 @@ services:
     extends:
       file: ../../docker-compose.yml
       service: chromadb
+    container_name: embedding_chromadb
     networks:
       - common_network_embedding
 
@@ -36,7 +40,7 @@ services:
     # build: 
     #   context: .
     #   dockerfile: Dockerfile
-    container_name: rag_embedding_service
+    container_name: embedding_rag_service
     image: embedding_service_image
     restart: always
     depends_on:
@@ -66,16 +70,16 @@ services:
     
     networks:
       - common_network_embedding
-    
+
+    command: /usr/local/bin/python /app/server.py
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "sh", "-c", "grep -q SUCCESS /app_data/logs/embedding_service_status.txt"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
     
-    command: sleep 1000000
-
 
 # Common network for service communication
 networks:

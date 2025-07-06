@@ -668,6 +668,14 @@ if __name__ == "__main__":
         health_status = health_check()
         logger.info(f"Health check: {health_status}")
         
+        if all(health_status['services'].values()):
+            try:
+                with open('/app_data/logs/embedding_service_status.txt', 'w') as f:
+                    f.write(f"SUCCESS: Embedding service healthy at {health_status['timestamp']}\n")
+                logger.info("Success status file created at /app/embedding_service_status.txt")
+            except Exception as e:
+                logger.error(f"Failed to write status file: {e}")
+                
         # Start the main processing loop
         process_embedding_tasks()
         
