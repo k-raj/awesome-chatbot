@@ -57,7 +57,7 @@ services:
         echo 'Starting Ollama...' &&
         ollama serve > /app_data/logs/ollama.log 2>&1 &
         OLLAMA_PID=$$! &&
-        
+
         echo 'Waiting for Ollama to be ready...' &&
         for i in {1..30}; do
           if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
@@ -67,10 +67,15 @@ services:
           echo 'Waiting... ($$i/30)'
           sleep 2
         done &&
-        
-        echo 'Pulling model: $$MODEL_NAME' &&
-        ollama pull $$MODEL_NAME &&
-        
+
+        echo 'Checking if model: $$MODEL_NAME is available...' &&
+        if ! ollama list | grep -q \"$$MODEL_NAME\"; then
+          echo 'Pulling model: $$MODEL_NAME' &&
+          ollama pull $$MODEL_NAME
+        else
+          echo 'Model $$MODEL_NAME already present, skipping pull.'
+        fi &&
+
         echo 'Starting inference server...' &&
         /usr/local/bin/python /app/inference/server.py
       "
