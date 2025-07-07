@@ -1,0 +1,115 @@
+<!-- templates/index.html -->
+{% extends "base.html" %}
+
+{% block title %}RAG Chat - Home{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="display-6 fw-bold text-primary">
+                <i class="fas fa-layer-group me-3"></i>Your Groups
+            </h1>
+            <button class="btn btn-primary btn-lg" data-bs-toggle="modal" data-bs-target="#createGroupModal">
+                <i class="fas fa-plus me-2"></i>Create New Group
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    {% if groups %}
+        {% for group in groups %}
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card group-card {% if group.name == 'General Chat' %}general-chat{% endif %} fade-in" 
+                     onclick="location.href='{{ url_for('group_detail', group_id=group._id) }}'">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-3">
+                            <h5 class="card-title mb-0">
+                                {% if group.name == 'General Chat' %}
+                                    <i class="fas fa-comments text-success me-2"></i>
+                                {% else %}
+                                    <i class="fas fa-folder text-primary me-2"></i>
+                                {% endif %}
+                                {{ group.name }}
+                            </h5>
+                            {% if group.name != 'General Chat' %}
+                                <span class="badge bg-primary">{{ group.file_count or 0 }} files</span>
+                            {% endif %}
+                        </div>
+                        
+                        {% if group.description %}
+                            <p class="card-text text-muted">{{ group.description }}</p>
+                        {% endif %}
+                        
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                <i class="fas fa-calendar me-1"></i>
+                                {% if group.created_at %}
+                                    {{ group.created_at | datetime }}
+                                {% else %}
+                                    System default
+                                {% endif %}
+                            </small>
+                            <div class="btn-group" role="group">
+                                <a href="{{ url_for('group_detail', group_id=group._id) }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-cog"></i>
+                                </a>
+                                <a href="{{ url_for('chat_interface', group_id=group._id) }}" class="btn btn-sm btn-primary">
+                                    <i class="fas fa-comment"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="col-12">
+            <div class="text-center py-5">
+                <i class="fas fa-layer-group text-muted" style="font-size: 4rem;"></i>
+                <h3 class="mt-3 text-muted">No groups yet</h3>
+                <p class="text-muted">Create your first group to start organizing your documents and conversations.</p>
+                <button class="btn btn-primary btn-lg" data-bs-toggle="modal" data-bs-target="#createGroupModal">
+                    <i class="fas fa-plus me-2"></i>Create First Group
+                </button>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Create Group Modal -->
+<div class="modal fade" id="createGroupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('create_group') }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-plus-circle me-2"></i>Create New Group
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="groupName" class="form-label">Group Name *</label>
+                        <input type="text" class="form-control" id="groupName" name="name" required 
+                               placeholder="e.g., Research Papers, Company Docs">
+                    </div>
+                    <div class="mb-3">
+                        <label for="groupDescription" class="form-label">Description</label>
+                        <textarea class="form-control" id="groupDescription" name="description" rows="3"
+                                  placeholder="Brief description of what this group is for..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-check me-2"></i>Create Group
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

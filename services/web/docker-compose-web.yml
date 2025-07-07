@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # Import external services from parent directory
+  mongodb:
+    extends:
+      file: ../../docker-compose.yml
+      service: mongodb
+    container_name: api_mongodb
+    networks:
+      - common_network_web
+
+  elasticsearch:
+    extends:
+      file: ../../docker-compose.yml
+      service: elasticsearch
+    container_name: api_elasticsearch
+    networks:
+      - common_network_web
+      
+  redis:
+    extends:
+      file: ../../docker-compose.yml
+      service: redis
+    container_name: api_redis
+    networks:
+      - common_network_web
+
+  chromadb:
+    extends:
+      file: ../../docker-compose.yml
+      service: chromadb
+    container_name: api_chromadb
+    networks:
+      - common_network_web
+
+  embedding_service:
+    extends:
+      file: ../embedding/docker-compose-embedding.yml
+      service: embedding_service
+    networks:
+      - common_network_web
+
+  inference_service:
+    extends:
+      file: ../inference/docker-compose-inference.yml
+      service: inference_service
+    networks:
+      - common_network_web
+
+  api_service:
+    extends:
+      file: ../api/docker-compose-api.yml
+      service: api_service
+    networks:
+      - common_network_web
+    
+  web_service:
+    # # Uncomment the build section if you want to build the image from a Dockerfile
+    # build: 
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: web_service
+    image: web_service_image
+    restart: always
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+      embedding_service:
+        condition: service_healthy
+      inference_service:
+        condition: service_healthy
+      api_service:
+        condition: service_healthy
+    env_file:
+      - ../../env/${PROFILE:-dev}.env
+      
+    volumes:
+      - ../../app_data/web_service/logs:/app_data/logs:rw
+      - ../../services:/app:rw
+    
+    networks:
+      - common_network_web
+
+    ports:
+      - "${WEB_UI_PORT:-7070}:7070"
+      
+    healthcheck:
+      test: ["CMD", "sh", "-c", "grep -q SUCCESS /app_data/logs/web_service_status.txt"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # command: /usr/local/bin/python /app/api/server.py
+    command: sleep 100000
+
+# Common network for service communication
+networks:
+  common_network_web:
+    driver: bridge
+  common_network_api:
+    driver: bridge
+  common_network_embedding:
+    driver: bridge
+  common_network_inference:
+    driver: bridge

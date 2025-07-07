@@ -1,0 +1,49 @@
+{
+  "name": "RAG API Service",
+  "dockerComposeFile": [
+    "../../services/api/docker-compose-api.yml"
+  ],
+  "service": "api_service",
+  "workspaceFolder": "/app",
+  "shutdownAction": "stopCompose",
+  
+  // Simplified environment handling
+  "containerEnv": {
+    "PROFILE": "dev",
+    "PYTHONPATH": "/app"
+  },
+  
+  // Remove problematic Python feature and use docker-only approach
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  
+  // Configure VS Code
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylint",
+        "ms-python.black-formatter",
+        "ms-python.isort"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python3",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.formatting.provider": "black"
+      }
+    }
+  },
+  
+  // Install Python tools after container is created (optimized for python:3.10-slim)
+  "postCreateCommand": "python3 -m pip install --upgrade pip setuptools wheel && python3 -m pip install flake8 autopep8 black yapf mypy pydocstyle pycodestyle bandit pipenv virtualenv pytest pylint",
+  
+  "remoteUser": "root",
+  "updateContentCommand": "true",
+  
+  "initializeCommand": "echo 'Initializing...'",
+  "onCreateCommand": "echo 'Container starting...'",
+  
+  "overrideCommand": true
+}
