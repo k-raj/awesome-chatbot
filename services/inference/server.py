@@ -660,14 +660,14 @@ if __name__ == '__main__':
     
     if health['status'] == 'healthy':
         try:
-            # Start processing tasks
-            process_inference_tasks()
             try:
                 with open(status_file, 'w') as f:
                     f.write(f"SUCCESS: Inference service healthy\n")
                 logger.info(f"Success status file created at {status_file}")
             except Exception as e:
                 logger.error(f"Failed to write status file: {e}")
+            # Start processing tasks
+            process_inference_tasks()
         except KeyboardInterrupt:
             logger.info("Received interrupt signal")
         finally:
