@@ -46,7 +46,7 @@ services:
       - common_network_inference
     
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      test: ["CMD", "sh", "-c", "grep -q SUCCESS /app_data/logs/inference_service_status.txt"]
       interval: 30s
       timeout: 10s
       retries: 3
