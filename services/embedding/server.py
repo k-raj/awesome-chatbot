@@ -13,6 +13,7 @@ import redis
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import chromadb
+from  pathlib import Path
 from chromadb.config import Settings
 from elasticsearch import Elasticsearch
 import PyPDF2
@@ -661,6 +662,10 @@ def cleanup_services():
 
 if __name__ == "__main__":
     try:
+        status_file = '/app_data/logs/embedding_service_status.txt'
+        if Path(status_file).exists():
+            os.remove(status_file)
+            
         # Initialize all services
         initialize_services()
         
@@ -670,9 +675,9 @@ if __name__ == "__main__":
         
         if all(health_status['services'].values()):
             try:
-                with open('/app_data/logs/embedding_service_status.txt', 'w') as f:
+                with open(status_file, 'w') as f:
                     f.write(f"SUCCESS: Embedding service healthy at {health_status['timestamp']}\n")
-                logger.info("Success status file created at /app/embedding_service_status.txt")
+                logger.info(f"Success status file created at {status_file}")
             except Exception as e:
                 logger.error(f"Failed to write status file: {e}")
                 

@@ -1,9 +1,9 @@
 {
-  "name": "RAG Embedding Service",
+  "name": "RAG Inference Service",
   "dockerComposeFile": [
-    "../../services/embedding/docker-compose-embedding.yml"
+    "../../services/inference/docker-compose-inference.yml"
   ],
-  "service": "embedding_service",
+  "service": "inference_service",
   "workspaceFolder": "/app",
   "shutdownAction": "stopCompose",
   

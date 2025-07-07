@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  redis:
+    extends:
+      file: ../../docker-compose.yml
+      service: redis
+    container_name: inference_redis
+    networks:
+      - common_network_inference
+
+  mongodb:
+    extends:
+      file: ../../docker-compose.yml
+      service: mongodb
+    container_name: embedding_mongodb
+    networks:
+      - common_network_inference
+
+  inference_service:
+    # # Uncomment the build section if you want to build the image from a Dockerfile
+    # build: 
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: inference_service
+    image: inference_service_image
+    restart: always
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ../../env/${PROFILE:-dev}.env
+    environment:
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      
+      
+    volumes:
+      - ../../app_data/ollama:/root/.ollama:rw
+      - ../../app_data/inference_service/logs:/app_data/logs:rw
+      - ../../services:/app:rw
+    
+    networks:
+      - common_network_inference
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    command: >
+      bash -c "
+        echo 'Starting Ollama...' &&
+        ollama serve > /app_data/logs/ollama.log 2>&1 &
+        OLLAMA_PID=$$! &&
+        
+        echo 'Waiting for Ollama to be ready...' &&
+        for i in {1..30}; do
+          if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+            echo 'Ollama is ready!'
+            break
+          fi
+          echo 'Waiting... ($$i/30)'
+          sleep 2
+        done &&
+        
+        echo 'Pulling model: $$MODEL_NAME' &&
+        ollama pull $$MODEL_NAME &&
+        
+        echo 'Starting inference server...' &&
+        /usr/local/bin/python /app/inference/server.py
+      "
+
+
+# Common network for service communication
+networks:
+  common_network_inference:
+    driver: bridge
