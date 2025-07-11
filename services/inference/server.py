@@ -14,9 +14,10 @@ import requests
 from dataclasses import dataclass
 from pymongo import MongoClient, errors
 from pymongo.collection import Collection
+import ollama
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(filename="/app_data/logs/inference_service.log", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # MongoDB configuration
@@ -158,7 +159,8 @@ class ModelUsageTracker:
     
     def log_inference_request(self, model_name: str, model_type: str, 
                              prompt: str, response: str, generation_time: float,
-                             context_used: int = 0, task_id: str = None):
+                             context_used: int = 0, task_id: str = None,
+                             timed_out: bool = False):
         """Log individual inference request"""
         try:
             # Estimate tokens (rough approximation: 1 token ≈ 4 characters)
@@ -173,39 +175,41 @@ class ModelUsageTracker:
                 "estimated_tokens": response_tokens,
                 "generation_time": generation_time,
                 "context_documents": context_used,
+                "timed_out": timed_out,
                 "timestamp": datetime.now(timezone.utc)
             }
             
             # Insert log entry
             self.inference_logs_collection.insert_one(log_entry)
             
-            # Update model usage statistics
-            self.models_collection.update_one(
-                {
+            # Update model usage statistics only if not timed out
+            if not timed_out:
+                self.models_collection.update_one(
+                    {
+                        "model_name": model_name,
+                        "model_type": model_type
+                    },
+                    {
+                        "$inc": {
+                            "total_requests": 1,
+                            "total_tokens_generated": response_tokens,
+                            "total_generation_time": generation_time
+                        }
+                    }
+                )
+                
+                # Update average generation time
+                model_stats = self.models_collection.find_one({
                     "model_name": model_name,
                     "model_type": model_type
-                },
-                {
-                    "$inc": {
-                        "total_requests": 1,
-                        "total_tokens_generated": response_tokens,
-                        "total_generation_time": generation_time
-                    }
-                }
-            )
-            
-            # Update average generation time
-            model_stats = self.models_collection.find_one({
-                "model_name": model_name,
-                "model_type": model_type
-            })
-            
-            if model_stats:
-                avg_time = model_stats["total_generation_time"] / model_stats["total_requests"]
-                self.models_collection.update_one(
-                    {"_id": model_stats["_id"]},
-                    {"$set": {"average_generation_time": avg_time}}
-                )
+                })
+                
+                if model_stats:
+                    avg_time = model_stats["total_generation_time"] / model_stats["total_requests"]
+                    self.models_collection.update_one(
+                        {"_id": model_stats["_id"]},
+                        {"$set": {"average_generation_time": avg_time}}
+                    )
             
             logger.debug(f"Logged inference request for {model_name}")
             
@@ -367,38 +371,18 @@ class OllamaInference(LLMInference):
         """Ensure the model is downloaded and loaded"""
         try:
             # Check if model exists
-            response = requests.get(f"{self.base_url}/api/tags")
-            if response.status_code == 200:
-                models = response.json().get('models', [])
-                model_names = [m['name'] for m in models]
-                
-                if self.model_name not in model_names:
-                    logger.info(f"Pulling model {self.model_name}...")
-                    pull_response = requests.post(
-                        f"{self.base_url}/api/pull",
-                        json={"name": self.model_name},
-                        stream=True
-                    )
-                    
-                    # Stream the pull progress
-                    for line in pull_response.iter_lines():
-                        if line:
-                            try:
-                                progress = json.loads(line)
-                                status = progress.get('status', '')
-                                logger.info(f"Pull progress: {status}")
-                            except json.JSONDecodeError:
-                                pass
-                    
-                    if pull_response.status_code != 200:
-                        logger.error(f"Failed to pull model: {pull_response.text}")
-            else:
-                logger.error(f"Failed to check models: {response.text}")
+            client = ollama.Client()
+            models = client.list()
+            model_names = [model.model for model in models.models]
+            if self.model_name not in model_names:
+                logger.info(f"Pulling model {self.model_name}...")
+                for progress in client.pull(self.model_name, stream=True):
+                    logger.info(f"Pull progress: {progress.get('status')}")
         except Exception as e:
-            logger.error(f"Error checking Ollama models: {e}")
+            raise Exception(f"Error checking Ollama models: {e}")
     
-    def generate(self, prompt: str, context: str = "", conversation_history: List[Dict] = None, **kwargs) -> str:
-        """Generate response using Ollama with chat template"""
+    def generate(self, prompt: str, context: str = "", conversation_history: List[Dict] = None, timeout: int = 120, **kwargs):
+        """Generate response using Ollama with chat template and proper timeout handling"""
         try:
             # Build messages list
             messages = []
@@ -422,37 +406,42 @@ class OllamaInference(LLMInference):
             
             # Format using chat template
             formatted_prompt = ChatTemplate.format_messages(messages, self.model_name)
+            client = ollama.Client(timeout=timeout)
+            start_time = time.time()
             
-            # Generate response
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": formatted_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": kwargs.get('temperature', TEMPERATURE),
-                        "num_predict": kwargs.get('max_tokens', MAX_TOKENS),
-                        "top_p": kwargs.get('top_p', TOP_P),
-                        "repeat_penalty": kwargs.get('repeat_penalty', REPEAT_PENALTY),
-                        "stop": kwargs.get('stop', STOP_SEQUENCES)
-                    }
-                },
-                timeout=120  # 2 minute timeout
+            # Create the generator with timeout handling
+            generator = client.generate(
+                model=self.model_name,
+                prompt=formatted_prompt,
+                stream=True,
+                options={   
+                    "temperature": kwargs.get('temperature', TEMPERATURE),
+                    "num_predict": kwargs.get('max_tokens', MAX_TOKENS),
+                    "top_p": kwargs.get('top_p', TOP_P),
+                    "repeat_penalty": kwargs.get('repeat_penalty', REPEAT_PENALTY),
+                    "stop": kwargs.get('stop', STOP_SEQUENCES)
+                }
             )
             
-            if response.status_code == 200:
-                return response.json()['response'].strip()
-            else:
-                logger.error(f"Ollama API error: {response.text}")
-                return "Sorry, I encountered an error generating a response."
+            # Stream with timeout checking
+            for chunk in generator:
+                current_time = time.time()
+                elapsed_time = current_time - start_time
                 
-        except requests.exceptions.Timeout:
-            logger.error("Request timed out")
-            return "Sorry, the request timed out. Please try again."
+                if elapsed_time > timeout:
+                    logger.warning(f"Generate task:{kwargs.get('task_id', '')} timed out after: {elapsed_time:.2f}s")
+                    yield "", True, True  # empty response, done=True, timed_out=True
+                    return
+                
+                if chunk:
+                    yield chunk.response, chunk.done, False  # response, done, timed_out=False
+                    
+                    if chunk.done:
+                        return
+            
         except Exception as e:
             logger.error(f"Error in Ollama inference: {e}")
-            return "Sorry, I encountered an error generating a response."
+            yield "Sorry, I encountered an error generating a response.", True, False
 
 
 # Initialize appropriate inference backend
@@ -494,33 +483,6 @@ def format_context(documents: List[Dict]) -> str:
     return "\n\n".join(context_parts)
 
 
-def generate_response(prompt: str, context: str, conversation_history: List[Dict], task_id: str = None) -> str:
-    """Generate response with conversation history and tracking"""
-    start_time = time.time()
-    
-    response = inference_engine.generate(
-        prompt=prompt,
-        context=context,
-        conversation_history=conversation_history
-    )
-    
-    generation_time = time.time() - start_time
-    
-    # Log the inference request to MongoDB
-    if model_tracker:
-        model_tracker.log_inference_request(
-            model_name=MODEL_NAME,
-            model_type=MODEL_TYPE,
-            prompt=prompt,
-            response=response,
-            generation_time=generation_time,
-            context_used=len(context.split('\n\n')) if context else 0,
-            task_id=task_id
-        )
-    
-    return response
-
-
 def process_inference_tasks():
     """Main loop to process inference tasks from Redis"""
     logger.info("Inference service started")
@@ -551,8 +513,54 @@ def process_inference_tasks():
                 
                 # Generate response with tracking
                 start_time = time.time()
-                response = generate_response(prompt, context, conversation_history, task_id)
+                response = ""
+                timed_out = False
+                
+                for resp_token, done, timeout_occurred in inference_engine.generate(
+                        prompt=prompt,
+                        context=context,
+                        conversation_history=conversation_history,
+                        timeout=task.get('timeout', 120),
+                        task_id=task_id
+                    ):
+                    
+                    if timeout_occurred:
+                        # Handle timeout case
+                        timed_out = True
+                        redis_client.lpush(
+                            f"inference_result:{task_id}", 
+                            "<|STOP|>"
+                        )
+                        break
+                    
+                    if done:
+                        redis_client.lpush(
+                            f"inference_result:{task_id}", 
+                            "<|STOP|>"
+                        )
+                        break
+                    
+                    if resp_token:
+                        redis_client.lpush(
+                            f"inference_result:{task_id}", 
+                            resp_token
+                        )
+                        response += resp_token
+                
                 generation_time = time.time() - start_time
+                
+                # Log the inference request to MongoDB
+                if model_tracker:
+                    model_tracker.log_inference_request(
+                        model_name=MODEL_NAME,
+                        model_type=MODEL_TYPE,
+                        prompt=prompt,
+                        response=response,
+                        generation_time=generation_time,
+                        context_used=len(context.split('\n\n')) if context else 0,
+                        task_id=task_id,
+                        timed_out=timed_out
+                    )
                 
                 # Store result in Redis
                 result = {
@@ -561,23 +569,19 @@ def process_inference_tasks():
                     'model_used': f"{MODEL_TYPE}:{MODEL_NAME}",
                     'context_used': len(retrieved_docs),
                     'generation_time': round(generation_time, 2),
+                    'timed_out': timed_out,
                     'timestamp': datetime.utcnow().isoformat()
                 }
                 
-                # Store with longer TTL for debugging
-                redis_client.setex(
-                    f"inference_result:{task_id}", 
-                    300,  # Expire after 5 minutes
-                    json.dumps(result)
-                )
-                
                 # Also publish to a channel for real-time updates
-                redis_client.publish(
+                redis_client.setex(
                     f"inference_complete:{task_id}",
+                    300,
                     json.dumps(result)
                 )
                 
-                logger.info(f"Generated response for task {task_id} in {generation_time:.2f}s")
+                status = "timed out" if timed_out else "completed"
+                logger.info(f"Generated response for task {task_id} {status} in {generation_time:.2f}s")
                 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in task: {e}")
@@ -599,8 +603,12 @@ def health_check():
             model_stats = model_tracker.get_model_statistics(MODEL_NAME, MODEL_TYPE)
             mongodb_status = f"connected ({len(model_stats)} models tracked)"
         
-        # Check model availability
-        test_response = inference_engine.generate("Hello", "")
+        # Check model availability with a quick test
+        test_response = ""
+        for resp_token, done, timed_out in inference_engine.generate("Hello", "", timeout=10):
+            if done or timed_out:
+                break
+            test_response += resp_token
         
         return {
             'status': 'healthy',
@@ -641,7 +649,7 @@ def shutdown_handler():
 if __name__ == '__main__':
     import signal
     import sys
-    from  pathlib import Path
+    from pathlib import Path
     status_file = '/app_data/logs/inference_service_status.txt'
     if Path(status_file).exists():
         os.remove(status_file)
